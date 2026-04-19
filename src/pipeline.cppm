@@ -8,12 +8,12 @@ namespace engine {
 
 // ---------------------------------------------------------------------------: Pipeline
 
-// Minimal graphics pipeline for dynamic rendering: loads one SPIR-V blob that
-// contains both vertMain and fragMain entry points (produced by slangc) and
-// builds a pipeline with a single color attachment and no vertex input.
+// Minimal graphics pipeline for dynamic rendering. Takes an externally-owned
+// shader module (containing vertMain + fragMain entry points) and builds a
+// pipeline with a single color attachment and no vertex input.
 export class Pipeline {
  public:
-  Pipeline(Device& device, const std::filesystem::path& spirv_path, vk::Format color_format);
+  Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format);
 
   Pipeline(const Pipeline&) = delete;
   Pipeline& operator=(const Pipeline&) = delete;
@@ -24,9 +24,6 @@ export class Pipeline {
   const vk::raii::PipelineLayout& GetLayout() const { return layout_; }
 
  private:
-  static std::vector<char> ReadFile(const std::filesystem::path& path);
-  vk::raii::ShaderModule CreateShaderModule(const std::vector<char>& code) const;
-
   Device& device_;
   vk::raii::PipelineLayout layout_ = nullptr;
   vk::raii::Pipeline pipeline_ = nullptr;
@@ -34,11 +31,8 @@ export class Pipeline {
 
 // ---------------------------------------------------------------------------: Implementation
 
-Pipeline::Pipeline(Device& device, const std::filesystem::path& spirv_path, vk::Format color_format)
+Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format)
     : device_(device) {
-  auto code = ReadFile(spirv_path);
-  auto shader_module = CreateShaderModule(code);
-
   std::array<vk::PipelineShaderStageCreateInfo, 2> stages{
       vk::PipelineShaderStageCreateInfo{
           .stage = vk::ShaderStageFlagBits::eVertex,
@@ -123,25 +117,6 @@ Pipeline::Pipeline(Device& device, const std::filesystem::path& spirv_path, vk::
 
   pipeline_ = vk::raii::Pipeline(device_.GetLogicalDevice(), nullptr,
                                  chain.get<vk::GraphicsPipelineCreateInfo>());
-}
-
-std::vector<char> Pipeline::ReadFile(const std::filesystem::path& path) {
-  std::ifstream file(path, std::ios::ate | std::ios::binary);
-  if (!file.is_open()) {
-    throw std::runtime_error("Failed to open shader file: " + path.string());
-  }
-  std::vector<char> buffer(static_cast<std::size_t>(file.tellg()));
-  file.seekg(0);
-  file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-  return buffer;
-}
-
-vk::raii::ShaderModule Pipeline::CreateShaderModule(const std::vector<char>& code) const {
-  vk::ShaderModuleCreateInfo create_info{
-      .codeSize = code.size(),
-      .pCode = reinterpret_cast<const std::uint32_t*>(code.data()),
-  };
-  return vk::raii::ShaderModule(device_.GetLogicalDevice(), create_info);
 }
 
 }  // namespace engine

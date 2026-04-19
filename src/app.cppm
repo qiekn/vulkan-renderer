@@ -17,6 +17,7 @@ import engine.swapchain;
 import engine.pipeline;
 import engine.renderer;
 import engine.scene;
+import engine.resource;
 
 namespace app {
 
@@ -25,7 +26,8 @@ namespace app {
 constexpr std::uint32_t kWindowWidth = 1280;
 constexpr std::uint32_t kWindowHeight = 720;
 constexpr std::string_view kWindowTitle = "Vulkan Engine";
-constexpr std::string_view kShaderPath = "assets/shaders/slang.spv";
+constexpr std::string_view kTriangleShaderId = "triangle";
+constexpr std::string_view kTriangleShaderPath = "assets/shaders/slang.spv";
 
 // ---------------------------------------------------------------------------: Listener
 
@@ -74,7 +76,15 @@ export class Application {
     engine::Window window(kWindowWidth, kWindowHeight, kWindowTitle, event_bus);
     engine::Device device(window);
     engine::Swapchain swapchain(window, device);
-    engine::Pipeline pipeline(device, kShaderPath, swapchain.GetImageFormat());
+
+    engine::ResourceManager resources;
+    auto triangle_shader = resources.Load<engine::ShaderResource>(
+        std::string(kTriangleShaderId), device, std::filesystem::path(kTriangleShaderPath));
+    if (!triangle_shader) {
+      throw std::runtime_error("Failed to load triangle shader");
+    }
+
+    engine::Pipeline pipeline(device, *triangle_shader->GetModule(), swapchain.GetImageFormat());
     engine::Renderer renderer(window, device, swapchain, pipeline);
 
     engine::Scene scene;
