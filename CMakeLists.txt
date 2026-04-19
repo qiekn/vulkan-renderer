@@ -98,6 +98,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   glm
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  GLM_FORCE_DEPTH_ZERO_TO_ONE  # Vulkan clip-space depth is [0, 1], not OpenGL's [-1, 1]
+  GLM_FORCE_RADIANS
+)
+
 add_custom_target(sync_assets ALL
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ASSETS_BINARY_DIR}
   COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${ASSETS_SOURCE_DIR} ${ASSETS_BINARY_DIR}
