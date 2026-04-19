@@ -20,6 +20,8 @@ import engine.scene;
 import engine.resource;
 import engine.render_pass;
 import engine.forward_pass;
+import engine.uniform;
+import engine.camera_controller;
 
 namespace app {
 
@@ -33,7 +35,7 @@ constexpr std::string_view kTriangleShaderPath = "assets/shaders/slang.spv";
 
 // ---------------------------------------------------------------------------: Listener
 
-// Demo listener: Esc closes, C dumps camera matrices, resize updates aspect.
+// Esc closes, C dumps camera matrices, resize updates aspect.
 class AppListener : public engine::EventListener {
  public:
   AppListener(engine::Window& window, engine::CameraComponent& camera)
@@ -86,10 +88,13 @@ export class Application {
       throw std::runtime_error("Failed to load triangle shader");
     }
 
-    engine::Pipeline pipeline(device, *triangle_shader->GetModule(), swapchain.GetImageFormat());
+    engine::UniformBufferSet ubo_set(device, engine::Renderer::kMaxFramesInFlight);
+
+    engine::Pipeline pipeline(device, *triangle_shader->GetModule(),
+                              swapchain.GetImageFormat(), *ubo_set.GetLayout());
 
     engine::RenderPassManager pass_manager;
-    pass_manager.AddPass<engine::ForwardPass>(pipeline);
+    pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set);
 
     engine::Renderer renderer(window, device, swapchain, pass_manager);
 
@@ -105,8 +110,13 @@ export class Application {
     auto extent = swapchain.GetExtent();
     camera->SetAspect(static_cast<float>(extent.width) / static_cast<float>(extent.height));
 
+    engine::CameraController controller(*camera_transform, *camera);
+    event_bus.AddListener(&controller);
+
     AppListener listener(window, *camera);
     event_bus.AddListener(&listener);
+
+    window.SetCursorDisabled(true);
 
     auto last_time = std::chrono::steady_clock::now();
     while (!window.ShouldClose()) {
@@ -116,17 +126,28 @@ export class Application {
       float delta = std::chrono::duration<float>(now - last_time).count();
       last_time = now;
 
+      controller.Update(delta);
+
       // Rotate the triangle entity around Y to show Update() is wired in.
       glm::quat rot = triangle_transform->GetRotation();
       rot = glm::angleAxis(delta, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
       triangle_transform->SetRotation(rot);
 
       scene.Update(delta);
+
+      engine::UniformBufferObject ubo{
+          .model = triangle_transform->GetMatrix(),
+          .view = camera->GetViewMatrix(),
+          .proj = camera->GetProjectionMatrix(),
+      };
+      ubo_set.Update(renderer.GetCurrentFrame(), ubo);
+
       renderer.DrawFrame();
     }
     renderer.WaitIdle();
 
     event_bus.RemoveListener(&listener);
+    event_bus.RemoveListener(&controller);
   }
 };
 

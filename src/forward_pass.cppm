@@ -4,18 +4,19 @@ import vulkan;
 import std;
 import engine.pipeline;
 import engine.render_pass;
+import engine.uniform;
 
 namespace engine {
 
 // ---------------------------------------------------------------------------: ForwardPass
 
 // Single-attachment forward pass that clears the color target and renders a
-// hardcoded triangle via the supplied pipeline. Serves as the canonical
-// example of how to plug concrete rendering into RenderPassManager.
+// hardcoded triangle via the supplied pipeline. Binds the per-frame MVP UBO
+// descriptor set before issuing the draw.
 export class ForwardPass : public RenderPass {
  public:
-  explicit ForwardPass(Pipeline& pipeline)
-      : RenderPass("Forward"), pipeline_(pipeline) {}
+  ForwardPass(Pipeline& pipeline, UniformBufferSet& ubo_set)
+      : RenderPass("Forward"), pipeline_(pipeline), ubo_set_(ubo_set) {}
 
  protected:
   void BeginPass(RenderContext& ctx) override {
@@ -38,6 +39,8 @@ export class ForwardPass : public RenderPass {
 
   void Render(RenderContext& ctx) override {
     ctx.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_.GetHandle());
+    ctx.cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_.GetLayout(),
+                               0, *ubo_set_.GetSet(ctx.frame_index), nullptr);
 
     vk::Viewport viewport{
         .x = 0.0f,
@@ -59,6 +62,7 @@ export class ForwardPass : public RenderPass {
 
  private:
   Pipeline& pipeline_;
+  UniformBufferSet& ubo_set_;
 };
 
 }  // namespace engine
