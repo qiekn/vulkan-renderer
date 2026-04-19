@@ -47,6 +47,16 @@ target_sources(VulkanCppModule
 )
 
 # -----------------------------------------------------------------------------: Slang
+find_program(SLANGC_EXECUTABLE
+  NAMES slangc
+  HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin"
+  DOC "Path to slangc shader compiler"
+)
+if (NOT SLANGC_EXECUTABLE)
+  message(FATAL_ERROR "slangc not found. Set VULKAN_SDK or add slangc to PATH.")
+endif()
+message(STATUS "Found slangc: ${SLANGC_EXECUTABLE}")
+
 function (add_slang_shader_target TARGET)
   cmake_parse_arguments ("SHADER" "" "" "SOURCES" ${ARGN})
 
@@ -60,7 +70,7 @@ function (add_slang_shader_target TARGET)
   add_custom_command (
           OUTPUT ${SLANG_OUTPUT}
           COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_BINARY_DIR}
-          COMMAND slangc ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${SLANG_OUTPUT}
+          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${SLANG_OUTPUT}
           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
           DEPENDS ${SHADER_SOURCES}
           COMMENT "Compiling Slang Shaders"

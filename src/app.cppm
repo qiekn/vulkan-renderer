@@ -1,79 +1,39 @@
-module;
-
-#include <stdexcept>
-
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
 export module app;
 
 import vulkan;
 import std;
+import engine.window;
+import engine.device;
+import engine.swapchain;
+import engine.pipeline;
+import engine.renderer;
 
 namespace app {
 
-// -----------------------------------------------------------------------------: Constants
+// ---------------------------------------------------------------------------: Constants
 
 constexpr std::uint32_t kWindowWidth = 1280;
 constexpr std::uint32_t kWindowHeight = 720;
-constexpr const char* kWindowTitle = "Vulkan Engine";
+constexpr std::string_view kWindowTitle = "Vulkan Engine";
+constexpr std::string_view kShaderPath = "assets/shaders/slang.spv";
 
-#ifdef NDEBUG
-constexpr bool kEnableValidationLayers = false;
-#else
-constexpr bool kEnableValidationLayers = true;
-#endif
-
-// -----------------------------------------------------------------------------: Application
+// ---------------------------------------------------------------------------: Application
 
 export class Application {
  public:
-  Application() = default;
-  ~Application() { Cleanup(); }
-
-  Application(const Application&) = delete;
-  Application& operator=(const Application&) = delete;
-  Application(Application&&) = delete;
-  Application& operator=(Application&&) = delete;
-
   void Run() {
-    InitWindow();
-    InitVulkan();
-    MainLoop();
-  }
+    engine::Window window(kWindowWidth, kWindowHeight, kWindowTitle);
+    engine::Device device(window);
+    engine::Swapchain swapchain(window, device);
+    engine::Pipeline pipeline(device, kShaderPath, swapchain.GetImageFormat());
+    engine::Renderer renderer(window, device, swapchain, pipeline);
 
- private:
-  void InitWindow() {
-    if (glfwInit() == GLFW_FALSE) {
-      throw std::runtime_error("failed to initialize GLFW");
+    while (!window.ShouldClose()) {
+      window.PollEvents();
+      renderer.DrawFrame();
     }
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    window_ = glfwCreateWindow(kWindowWidth, kWindowHeight, kWindowTitle, nullptr, nullptr);
-    if (window_ == nullptr) {
-      throw std::runtime_error("failed to create GLFW window");
-    }
+    renderer.WaitIdle();
   }
-
-  void InitVulkan() {
-    // TODO(engine): instance / device / swapchain / dynamic rendering setup
-    // will be added following the "Engine Architecture" chapter.
-  }
-
-  void MainLoop() {
-    while (glfwWindowShouldClose(window_) == GLFW_FALSE) {
-      glfwPollEvents();
-    }
-  }
-
-  void Cleanup() {
-    if (window_ != nullptr) {
-      glfwDestroyWindow(window_);
-      window_ = nullptr;
-    }
-    glfwTerminate();
-  }
-
-  GLFWwindow* window_ = nullptr;
 };
 
 }  // namespace app
