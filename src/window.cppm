@@ -7,14 +7,17 @@ export module engine.window;
 
 import vulkan;
 import std;
+import engine.event;
 
 namespace engine {
 
 // ---------------------------------------------------------------------------: Window
 
+// GLFW wrapper. Publishes input/window events to the provided EventBus whenever
+// GLFW fires a callback. The bus must outlive the Window.
 export class Window {
  public:
-  Window(std::uint32_t width, std::uint32_t height, std::string_view title);
+  Window(std::uint32_t width, std::uint32_t height, std::string_view title, EventBus& bus);
   ~Window();
 
   Window(const Window&) = delete;
@@ -23,6 +26,7 @@ export class Window {
   Window& operator=(Window&&) = delete;
 
   bool ShouldClose() const;
+  void RequestClose() const;
   void PollEvents() const;
   void WaitEvents() const;
 
@@ -35,14 +39,25 @@ export class Window {
 
  private:
   static void FramebufferResizeCallback(GLFWwindow* window, int width, int height);
+  static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+  static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+  static void CursorPosCallback(GLFWwindow* window, double x, double y);
+  static void ScrollCallback(GLFWwindow* window, double x_offset, double y_offset);
+  static void WindowCloseCallback(GLFWwindow* window);
+
+  static Window* FromGLFW(GLFWwindow* window) {
+    return static_cast<Window*>(glfwGetWindowUserPointer(window));
+  }
 
   GLFWwindow* window_ = nullptr;
+  EventBus* bus_ = nullptr;
   bool resized_ = false;
 };
 
 // ---------------------------------------------------------------------------: Implementation
 
-Window::Window(std::uint32_t width, std::uint32_t height, std::string_view title) {
+Window::Window(std::uint32_t width, std::uint32_t height, std::string_view title, EventBus& bus)
+    : bus_(&bus) {
   if (glfwInit() == GLFW_FALSE) {
     throw std::runtime_error("Failed to initialize GLFW");
   }
@@ -55,6 +70,11 @@ Window::Window(std::uint32_t width, std::uint32_t height, std::string_view title
   }
   glfwSetWindowUserPointer(window_, this);
   glfwSetFramebufferSizeCallback(window_, &FramebufferResizeCallback);
+  glfwSetKeyCallback(window_, &KeyCallback);
+  glfwSetMouseButtonCallback(window_, &MouseButtonCallback);
+  glfwSetCursorPosCallback(window_, &CursorPosCallback);
+  glfwSetScrollCallback(window_, &ScrollCallback);
+  glfwSetWindowCloseCallback(window_, &WindowCloseCallback);
 }
 
 Window::~Window() {
@@ -66,6 +86,10 @@ Window::~Window() {
 
 bool Window::ShouldClose() const {
   return glfwWindowShouldClose(window_) == GLFW_TRUE;
+}
+
+void Window::RequestClose() const {
+  glfwSetWindowShouldClose(window_, GLFW_TRUE);
 }
 
 void Window::PollEvents() const {
@@ -97,11 +121,59 @@ vk::raii::SurfaceKHR Window::CreateSurface(const vk::raii::Instance& instance) c
   return vk::raii::SurfaceKHR(instance, raw_surface);
 }
 
-void Window::FramebufferResizeCallback(GLFWwindow* window, int /*width*/, int /*height*/) {
-  auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
-  if (self != nullptr) {
-    self->resized_ = true;
+// ---------------------------------------------------------------------------: GLFW callbacks
+
+void Window::FramebufferResizeCallback(GLFWwindow* window, int width, int height) {
+  auto* self = FromGLFW(window);
+  if (self == nullptr) return;
+  self->resized_ = true;
+  WindowResizeEvent event(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height));
+  self->bus_->Publish(event);
+}
+
+void Window::KeyCallback(GLFWwindow* window, int key, int /*scancode*/, int action, int mods) {
+  auto* self = FromGLFW(window);
+  if (self == nullptr) return;
+  if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+    KeyPressEvent event(key, mods, action == GLFW_REPEAT);
+    self->bus_->Publish(event);
+  } else if (action == GLFW_RELEASE) {
+    KeyReleaseEvent event(key, mods);
+    self->bus_->Publish(event);
   }
+}
+
+void Window::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+  auto* self = FromGLFW(window);
+  if (self == nullptr) return;
+  if (action == GLFW_PRESS) {
+    MouseButtonPressEvent event(button, mods);
+    self->bus_->Publish(event);
+  } else if (action == GLFW_RELEASE) {
+    MouseButtonReleaseEvent event(button, mods);
+    self->bus_->Publish(event);
+  }
+}
+
+void Window::CursorPosCallback(GLFWwindow* window, double x, double y) {
+  auto* self = FromGLFW(window);
+  if (self == nullptr) return;
+  MouseMoveEvent event(x, y);
+  self->bus_->Publish(event);
+}
+
+void Window::ScrollCallback(GLFWwindow* window, double x_offset, double y_offset) {
+  auto* self = FromGLFW(window);
+  if (self == nullptr) return;
+  MouseScrollEvent event(x_offset, y_offset);
+  self->bus_->Publish(event);
+}
+
+void Window::WindowCloseCallback(GLFWwindow* window) {
+  auto* self = FromGLFW(window);
+  if (self == nullptr) return;
+  WindowCloseEvent event;
+  self->bus_->Publish(event);
 }
 
 }  // namespace engine
