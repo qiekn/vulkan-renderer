@@ -1,0 +1,15 @@
+:pp: {plus}{plus}
+
+= Lighting & Materials: Basic lighting models and push constants
+
+This chapter covers the implementation of basic lighting models and the use of push constants for material properties in Vulkan. Throughout our engine implementation, we use vk::raii dynamic rendering and C++20 modules to create a modern, efficient, and maintainable codebase.
+
+== Contents
+
+* xref:Building_a_Simple_Engine/Lighting_Materials/01_introduction.adoc[Introduction]
+* xref:Building_a_Simple_Engine/Lighting_Materials/02_lighting_models.adoc[Lighting Models]
+* xref:Building_a_Simple_Engine/Lighting_Materials/03_push_constants.adoc[Push Constants]
+* xref:Building_a_Simple_Engine/Lighting_Materials/04_lighting_implementation.adoc[Lighting Implementation]
+* xref:Building_a_Simple_Engine/Lighting_Materials/05_vulkan_integration.adoc[Vulkan Integration]
+* xref:Building_a_Simple_Engine/Lighting_Materials/07_shadows.adoc[Shadows]
+* xref:Building_a_Simple_Engine/Lighting_Materials/06_conclusion.adoc[Conclusion]
