@@ -29,9 +29,16 @@ public:
   vk::Extent2D GetExtent() const { return extent_; }
   std::uint32_t GetImageCount() const { return static_cast<std::uint32_t>(images_.size()); }
 
+  vk::Image GetDepthImage() const { return *depth_image_; }
+  const vk::raii::ImageView& GetDepthView() const { return depth_view_; }
+  vk::Format GetDepthFormat() const { return depth_format_; }
+
 private:
   void Create();
   void CreateImageViews();
+  void CreateDepthResources();
+  vk::Format FindDepthFormat() const;
+  std::uint32_t FindMemoryType(std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const;
   vk::SurfaceFormatKHR ChooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& formats) const;
   vk::PresentModeKHR ChoosePresentMode(const std::vector<vk::PresentModeKHR>& modes) const;
   vk::Extent2D ChooseExtent(const vk::SurfaceCapabilitiesKHR& caps) const;
@@ -45,6 +52,11 @@ private:
   std::vector<vk::raii::ImageView> image_views_;
   vk::SurfaceFormatKHR format_{};
   vk::Extent2D extent_{};
+
+  vk::Format depth_format_ = vk::Format::eUndefined;
+  vk::raii::Image depth_image_ = nullptr;
+  vk::raii::DeviceMemory depth_memory_ = nullptr;
+  vk::raii::ImageView depth_view_ = nullptr;
 };
 
 // ---------------------------------------------------------------------------: Implementation
@@ -52,6 +64,7 @@ private:
 Swapchain::Swapchain(Window& window, Device& device) : window_(window), device_(device) {
   Create();
   CreateImageViews();
+  CreateDepthResources();
 }
 
 void Swapchain::Recreate() {
@@ -64,11 +77,15 @@ void Swapchain::Recreate() {
 
   device_.GetLogicalDevice().waitIdle();
 
+  depth_view_ = nullptr;
+  depth_image_ = nullptr;
+  depth_memory_ = nullptr;
   image_views_.clear();
   swapchain_ = nullptr;
 
   Create();
   CreateImageViews();
+  CreateDepthResources();
 }
 
 void Swapchain::Create() {
@@ -151,6 +168,79 @@ std::uint32_t Swapchain::ChooseImageCount(const vk::SurfaceCapabilitiesKHR& caps
     count = caps.maxImageCount;
   }
   return count;
+}
+
+void Swapchain::CreateDepthResources() {
+  depth_format_ = FindDepthFormat();
+  const auto& dev = device_.GetLogicalDevice();
+
+  vk::ImageCreateInfo image_info{
+      .imageType = vk::ImageType::e2D,
+      .format = depth_format_,
+      .extent = {extent_.width, extent_.height, 1},
+      .mipLevels = 1,
+      .arrayLayers = 1,
+      .samples = vk::SampleCountFlagBits::e1,
+      .tiling = vk::ImageTiling::eOptimal,
+      .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment,
+      .sharingMode = vk::SharingMode::eExclusive,
+      .initialLayout = vk::ImageLayout::eUndefined,
+  };
+  depth_image_ = vk::raii::Image(dev, image_info);
+
+  vk::MemoryRequirements reqs = depth_image_.getMemoryRequirements();
+  vk::MemoryAllocateInfo alloc_info{
+      .allocationSize = reqs.size,
+      .memoryTypeIndex = FindMemoryType(reqs.memoryTypeBits,
+                                        vk::MemoryPropertyFlagBits::eDeviceLocal),
+  };
+  depth_memory_ = vk::raii::DeviceMemory(dev, alloc_info);
+  depth_image_.bindMemory(*depth_memory_, 0);
+
+  vk::ImageViewCreateInfo view_info{
+      .image = *depth_image_,
+      .viewType = vk::ImageViewType::e2D,
+      .format = depth_format_,
+      .subresourceRange = {
+          .aspectMask = vk::ImageAspectFlagBits::eDepth,
+          .baseMipLevel = 0,
+          .levelCount = 1,
+          .baseArrayLayer = 0,
+          .layerCount = 1,
+      },
+  };
+  depth_view_ = vk::raii::ImageView(dev, view_info);
+}
+
+vk::Format Swapchain::FindDepthFormat() const {
+  // Prefer a pure-depth format; fall back to depth-stencil combos if the GPU
+  // doesn't advertise the first choice.
+  const std::array candidates = {
+      vk::Format::eD32Sfloat,
+      vk::Format::eD32SfloatS8Uint,
+      vk::Format::eD24UnormS8Uint,
+  };
+  for (auto fmt : candidates) {
+    auto props = device_.GetPhysicalDevice().getFormatProperties(fmt);
+    if ((props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
+        == vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+      return fmt;
+    }
+  }
+  throw std::runtime_error("Failed to find supported depth format");
+}
+
+std::uint32_t Swapchain::FindMemoryType(std::uint32_t type_filter,
+                                        vk::MemoryPropertyFlags properties) const {
+  auto props = device_.GetPhysicalDevice().getMemoryProperties();
+  for (std::uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+    bool type_ok = (type_filter & (1u << i)) != 0;
+    bool props_ok = (props.memoryTypes[i].propertyFlags & properties) == properties;
+    if (type_ok && props_ok) {
+      return i;
+    }
+  }
+  throw std::runtime_error("Failed to find suitable memory type for depth image");
 }
 
 }  // namespace engine

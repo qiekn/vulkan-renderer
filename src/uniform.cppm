@@ -12,14 +12,31 @@ namespace engine {
 
 // ---------------------------------------------------------------------------: UBO layout
 
-// Matches the `ubo` ConstantBuffer in triangle.slang. GLM produces column-major
-// matrices, which is what Slang's SPIR-V backend expects when compiled with
-// `-matrix-layout-column-major`; std140 layout is satisfied automatically
-// because every member is a 4x4 matrix aligned to 16 bytes.
+// Matches the `ubo` ConstantBuffer in pbr.slang. All members are vec4 / mat4 so
+// std140 / std430 layout rules line up 1:1 with the GLM memory layout (column-
+// major, 16-byte-aligned). Keep scalar floats together at the tail and pad them
+// to a multiple of 16 bytes so the struct stride is predictable.
 export struct UniformBufferObject {
   glm::mat4 model;
   glm::mat4 view;
   glm::mat4 proj;
+  glm::vec4 light_positions[4];
+  glm::vec4 light_colors[4];
+  glm::vec4 cam_pos;
+  float exposure;
+  float gamma;
+  float _pad0 = 0.0f;
+  float _pad1 = 0.0f;
+};
+
+// Material knobs shipped as push constants per draw. The BRDF in pbr.slang reads
+// base color, metallic, and roughness straight out of this block.
+export struct MaterialPushConstants {
+  glm::vec4 base_color;
+  float metallic;
+  float roughness;
+  float _pad0 = 0.0f;
+  float _pad1 = 0.0f;
 };
 
 // ---------------------------------------------------------------------------: UniformBufferSet
@@ -67,7 +84,8 @@ UniformBufferSet::UniformBufferSet(Device& device, std::uint32_t frame_count) : 
       .binding = 0,
       .descriptorType = vk::DescriptorType::eUniformBuffer,
       .descriptorCount = 1,
-      .stageFlags = vk::ShaderStageFlagBits::eVertex,
+      // Matrices feed the vertex stage; lights + cam_pos feed the fragment stage.
+      .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
   };
   vk::DescriptorSetLayoutCreateInfo layout_info{
       .bindingCount = 1,

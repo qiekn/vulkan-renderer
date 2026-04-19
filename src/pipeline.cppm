@@ -6,15 +6,38 @@ import engine.device;
 
 namespace engine {
 
+// ---------------------------------------------------------------------------: PipelineConfig
+
+// All the knobs the forward pipeline actually needs. Keeping this as a plain
+// struct (rather than a builder) keeps construction boring: callers fill it out
+// and pass it in. New passes add fields here instead of growing the Pipeline
+// constructor's positional arg list.
+export struct PipelineConfig {
+  vk::ShaderModule shader_module = nullptr;
+  vk::Format color_format = vk::Format::eUndefined;
+  vk::Format depth_format = vk::Format::eUndefined;  // eUndefined = no depth attachment
+
+  vk::VertexInputBindingDescription vertex_binding{};
+  std::span<const vk::VertexInputAttributeDescription> vertex_attributes{};
+
+  vk::DescriptorSetLayout descriptor_set_layout = nullptr;
+  std::span<const vk::PushConstantRange> push_constant_ranges{};
+
+  vk::CullModeFlags cull_mode = vk::CullModeFlagBits::eBack;
+  vk::FrontFace front_face = vk::FrontFace::eCounterClockwise;
+
+  bool depth_test = true;
+  bool depth_write = true;
+};
+
 // ---------------------------------------------------------------------------: Pipeline
 
-// Minimal graphics pipeline for dynamic rendering. Takes an externally-owned
-// shader module (containing vertMain + fragMain entry points) and builds a
-// pipeline with a single color attachment and no vertex input.
+// Graphics pipeline for dynamic rendering. Shader module, formats, vertex input,
+// descriptor layout, push constants, cull mode, and depth state are all fed
+// through PipelineConfig.
 export class Pipeline {
 public:
-  Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format,
-           vk::DescriptorSetLayout descriptor_set_layout = nullptr);
+  Pipeline(Device& device, const PipelineConfig& config);
 
   Pipeline(const Pipeline&) = delete;
   Pipeline& operator=(const Pipeline&) = delete;
@@ -32,24 +55,31 @@ private:
 
 // ---------------------------------------------------------------------------: Implementation
 
-Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format,
-                   vk::DescriptorSetLayout descriptor_set_layout)
-    : device_(device) {
+Pipeline::Pipeline(Device& device, const PipelineConfig& config) : device_(device) {
   std::array<vk::PipelineShaderStageCreateInfo, 2> stages{
       vk::PipelineShaderStageCreateInfo{
           .stage = vk::ShaderStageFlagBits::eVertex,
-          .module = shader_module,
+          .module = config.shader_module,
           .pName = "vertMain",
       },
       vk::PipelineShaderStageCreateInfo{
           .stage = vk::ShaderStageFlagBits::eFragment,
-          .module = shader_module,
+          .module = config.shader_module,
           .pName = "fragMain",
       },
   };
 
-  // Triangle is hardcoded in the shader via SV_VertexID, no vertex input.
+  // stride==0 means "no vertex buffer bound"; we detect that here so the old
+  // hardcoded-triangle path still works without touching the shader.
+  const bool has_vertex_input = config.vertex_binding.stride > 0;
   vk::PipelineVertexInputStateCreateInfo vertex_input{};
+  if (has_vertex_input) {
+    vertex_input.vertexBindingDescriptionCount = 1;
+    vertex_input.pVertexBindingDescriptions = &config.vertex_binding;
+    vertex_input.vertexAttributeDescriptionCount =
+        static_cast<std::uint32_t>(config.vertex_attributes.size());
+    vertex_input.pVertexAttributeDescriptions = config.vertex_attributes.data();
+  }
 
   vk::PipelineInputAssemblyStateCreateInfo input_assembly{
       .topology = vk::PrimitiveTopology::eTriangleList,
@@ -64,8 +94,8 @@ Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format co
       .depthClampEnable = vk::False,
       .rasterizerDiscardEnable = vk::False,
       .polygonMode = vk::PolygonMode::eFill,
-      .cullMode = vk::CullModeFlagBits::eNone,
-      .frontFace = vk::FrontFace::eCounterClockwise,
+      .cullMode = config.cull_mode,
+      .frontFace = config.front_face,
       .depthBiasEnable = vk::False,
       .lineWidth = 1.0f,
   };
@@ -73,6 +103,15 @@ Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format co
   vk::PipelineMultisampleStateCreateInfo multisampling{
       .rasterizationSamples = vk::SampleCountFlagBits::e1,
       .sampleShadingEnable = vk::False,
+  };
+
+  const bool has_depth = config.depth_format != vk::Format::eUndefined;
+  vk::PipelineDepthStencilStateCreateInfo depth_stencil{
+      .depthTestEnable = has_depth && config.depth_test ? vk::True : vk::False,
+      .depthWriteEnable = has_depth && config.depth_write ? vk::True : vk::False,
+      .depthCompareOp = vk::CompareOp::eLess,
+      .depthBoundsTestEnable = vk::False,
+      .stencilTestEnable = vk::False,
   };
 
   vk::PipelineColorBlendAttachmentState color_blend_attachment{
@@ -93,12 +132,15 @@ Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format co
       .pDynamicStates = dynamic_states.data(),
   };
 
-  // Descriptor set layout is passed in when the pipeline needs UBOs/samplers;
-  // nullptr means no descriptors bound.
   vk::PipelineLayoutCreateInfo layout_info{};
-  if (descriptor_set_layout) {
+  if (config.descriptor_set_layout) {
     layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &descriptor_set_layout;
+    layout_info.pSetLayouts = &config.descriptor_set_layout;
+  }
+  if (!config.push_constant_ranges.empty()) {
+    layout_info.pushConstantRangeCount =
+        static_cast<std::uint32_t>(config.push_constant_ranges.size());
+    layout_info.pPushConstantRanges = config.push_constant_ranges.data();
   }
   layout_ = vk::raii::PipelineLayout(device_.GetLogicalDevice(), layout_info);
 
@@ -111,6 +153,7 @@ Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format co
           .pViewportState = &viewport_state,
           .pRasterizationState = &rasterizer,
           .pMultisampleState = &multisampling,
+          .pDepthStencilState = has_depth ? &depth_stencil : nullptr,
           .pColorBlendState = &color_blending,
           .pDynamicState = &dynamic_state,
           .layout = layout_,
@@ -118,7 +161,8 @@ Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format co
       },
       vk::PipelineRenderingCreateInfo{
           .colorAttachmentCount = 1,
-          .pColorAttachmentFormats = &color_format,
+          .pColorAttachmentFormats = &config.color_format,
+          .depthAttachmentFormat = config.depth_format,
       },
   };
 

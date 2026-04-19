@@ -14,6 +14,7 @@ import engine.event;
 import engine.window;
 import engine.device;
 import engine.swapchain;
+import engine.mesh;
 import engine.pipeline;
 import engine.renderer;
 import engine.scene;
@@ -30,8 +31,8 @@ namespace app {
 constexpr std::uint32_t kWindowWidth = 1280;
 constexpr std::uint32_t kWindowHeight = 720;
 constexpr std::string_view kWindowTitle = "Vulkan Engine";
-constexpr std::string_view kTriangleShaderId = "triangle";
-constexpr std::string_view kTriangleShaderPath = "assets/shaders/slang.spv";
+constexpr std::string_view kPbrShaderId = "pbr";
+constexpr std::string_view kPbrShaderPath = "assets/shaders/slang.spv";
 
 // ---------------------------------------------------------------------------: Listener
 
@@ -82,31 +83,54 @@ public:
     engine::Swapchain swapchain(window, device);
 
     engine::ResourceManager resources;
-    auto triangle_shader = resources.Load<engine::ShaderResource>(
-        std::string(kTriangleShaderId), device, std::filesystem::path(kTriangleShaderPath));
-    if (!triangle_shader) {
-      throw std::runtime_error("Failed to load triangle shader");
+    auto pbr_shader = resources.Load<engine::ShaderResource>(
+        std::string(kPbrShaderId), device, std::filesystem::path(kPbrShaderPath));
+    if (!pbr_shader) {
+      throw std::runtime_error("Failed to load pbr shader");
     }
 
     engine::UniformBufferSet ubo_set(device, engine::Renderer::kMaxFramesInFlight);
+    engine::Mesh cube = engine::Mesh::CreateCube(device, 1.0f);
 
-    engine::Pipeline pipeline(device, *triangle_shader->GetModule(),
-                              swapchain.GetImageFormat(), *ubo_set.GetLayout());
+    auto vertex_attributes = engine::Mesh::GetAttributeDescriptions();
+    vk::PushConstantRange material_range{
+        .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+        .offset = 0,
+        .size = sizeof(engine::MaterialPushConstants),
+    };
+    engine::PipelineConfig pipeline_config{
+        .shader_module = *pbr_shader->GetModule(),
+        .color_format = swapchain.GetImageFormat(),
+        .depth_format = swapchain.GetDepthFormat(),
+        .vertex_binding = engine::Mesh::GetBindingDescription(),
+        .vertex_attributes = std::span(vertex_attributes),
+        .descriptor_set_layout = *ubo_set.GetLayout(),
+        .push_constant_ranges = std::span(&material_range, 1),
+        .cull_mode = vk::CullModeFlagBits::eBack,
+        .front_face = vk::FrontFace::eCounterClockwise,
+    };
+    engine::Pipeline pipeline(device, pipeline_config);
+
+    engine::MaterialPushConstants material{
+        .base_color = glm::vec4(0.9f, 0.1f, 0.05f, 1.0f),
+        .metallic = 0.1f,
+        .roughness = 0.35f,
+    };
 
     engine::RenderPassManager pass_manager;
-    pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set);
+    pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set, cube, material);
 
     engine::Renderer renderer(window, device, swapchain, pass_manager);
 
     engine::Scene scene;
 
-    engine::Entity* triangle = scene.CreateEntity("Triangle");
-    auto* triangle_transform = triangle->AddComponent<engine::TransformComponent>();
+    engine::Entity* cube_entity = scene.CreateEntity("Cube");
+    auto* cube_transform = cube_entity->AddComponent<engine::TransformComponent>();
 
     engine::Entity* camera_entity = scene.CreateEntity("Camera");
     auto* camera_transform = camera_entity->AddComponent<engine::TransformComponent>();
     auto* camera = camera_entity->AddComponent<engine::CameraComponent>();
-    camera_transform->SetPosition(glm::vec3(0.0f, 0.0f, 3.0f));
+    camera_transform->SetPosition(glm::vec3(0.0f, 1.2f, 3.5f));
     auto extent = swapchain.GetExtent();
     camera->SetAspect(static_cast<float>(extent.width) / static_cast<float>(extent.height));
 
@@ -118,6 +142,22 @@ public:
 
     window.SetCursorDisabled(true);
 
+    // Four point lights in a loose ring around the cube so every face picks up
+    // at least one direct light. Radiant intensity is in "watts per steradian"
+    // units — attenuation falls off with 1/r^2, so push the values up.
+    const std::array<glm::vec4, 4> light_positions = {
+        glm::vec4( 2.5f,  2.5f,  2.5f, 1.0f),
+        glm::vec4(-2.5f,  2.5f,  2.5f, 1.0f),
+        glm::vec4( 2.5f, -1.5f, -2.5f, 1.0f),
+        glm::vec4(-2.5f,  1.5f, -2.5f, 1.0f),
+    };
+    const std::array<glm::vec4, 4> light_colors = {
+        glm::vec4(60.0f, 55.0f, 50.0f, 1.0f),  // warm key
+        glm::vec4(20.0f, 25.0f, 45.0f, 1.0f),  // cool fill
+        glm::vec4(35.0f, 15.0f, 15.0f, 1.0f),  // red rim
+        glm::vec4(15.0f, 35.0f, 25.0f, 1.0f),  // green rim
+    };
+
     auto last_time = std::chrono::steady_clock::now();
     while (!window.ShouldClose()) {
       window.PollEvents();
@@ -128,18 +168,23 @@ public:
 
       controller.Update(delta);
 
-      // Rotate the triangle entity around Y to show Update() is wired in.
-      glm::quat rot = triangle_transform->GetRotation();
-      rot = glm::angleAxis(delta, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
-      triangle_transform->SetRotation(rot);
+      glm::quat rot = cube_transform->GetRotation();
+      rot = glm::angleAxis(delta * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
+      cube_transform->SetRotation(rot);
 
       scene.Update(delta);
 
+      glm::vec3 cam_pos = camera_transform->GetPosition();
       engine::UniformBufferObject ubo{
-          .model = triangle_transform->GetMatrix(),
+          .model = cube_transform->GetMatrix(),
           .view = camera->GetViewMatrix(),
           .proj = camera->GetProjectionMatrix(),
+          .cam_pos = glm::vec4(cam_pos, 1.0f),
+          .exposure = 1.0f,
+          .gamma = 2.2f,
       };
+      std::ranges::copy(light_positions, std::begin(ubo.light_positions));
+      std::ranges::copy(light_colors, std::begin(ubo.light_colors));
       ubo_set.Update(renderer.GetCurrentFrame(), ubo);
 
       renderer.DrawFrame();

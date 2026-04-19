@@ -37,6 +37,7 @@ private:
   void RecordCommandBuffer(vk::raii::CommandBuffer& cmd, std::uint32_t image_index);
   void TransitionImageLayout(vk::raii::CommandBuffer& cmd,
                              vk::Image image,
+                             vk::ImageAspectFlags aspect,
                              vk::ImageLayout old_layout,
                              vk::ImageLayout new_layout,
                              vk::AccessFlags2 src_access,
@@ -165,20 +166,36 @@ void Renderer::RecordCommandBuffer(vk::raii::CommandBuffer& cmd, std::uint32_t i
   cmd.begin(vk::CommandBufferBeginInfo{});
 
   TransitionImageLayout(cmd, swapchain_.GetImages()[image_index],
+                        vk::ImageAspectFlagBits::eColor,
                         vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                         vk::AccessFlags2{}, vk::AccessFlagBits2::eColorAttachmentWrite,
                         vk::PipelineStageFlagBits2::eTopOfPipe,
                         vk::PipelineStageFlagBits2::eColorAttachmentOutput);
 
+  // Depth starts undefined each frame (storeOp=eDontCare means the previous
+  // frame's contents are discarded); transition into the layout beginRendering
+  // expects for a depth attachment.
+  TransitionImageLayout(cmd, swapchain_.GetDepthImage(),
+                        vk::ImageAspectFlagBits::eDepth,
+                        vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal,
+                        vk::AccessFlags2{},
+                        vk::AccessFlagBits2::eDepthStencilAttachmentWrite
+                            | vk::AccessFlagBits2::eDepthStencilAttachmentRead,
+                        vk::PipelineStageFlagBits2::eTopOfPipe,
+                        vk::PipelineStageFlagBits2::eEarlyFragmentTests
+                            | vk::PipelineStageFlagBits2::eLateFragmentTests);
+
   RenderContext ctx{
       .cmd = cmd,
       .target_view = *swapchain_.GetImageViews()[image_index],
+      .depth_view = *swapchain_.GetDepthView(),
       .target_extent = swapchain_.GetExtent(),
       .frame_index = frame_index_,
   };
   passes_.Execute(ctx);
 
   TransitionImageLayout(cmd, swapchain_.GetImages()[image_index],
+                        vk::ImageAspectFlagBits::eColor,
                         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                         vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlags2{},
                         vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -189,6 +206,7 @@ void Renderer::RecordCommandBuffer(vk::raii::CommandBuffer& cmd, std::uint32_t i
 
 void Renderer::TransitionImageLayout(vk::raii::CommandBuffer& cmd,
                                      vk::Image image,
+                                     vk::ImageAspectFlags aspect,
                                      vk::ImageLayout old_layout,
                                      vk::ImageLayout new_layout,
                                      vk::AccessFlags2 src_access,
@@ -206,7 +224,7 @@ void Renderer::TransitionImageLayout(vk::raii::CommandBuffer& cmd,
       .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
       .image = image,
       .subresourceRange = {
-          .aspectMask = vk::ImageAspectFlagBits::eColor,
+          .aspectMask = aspect,
           .baseMipLevel = 0,
           .levelCount = 1,
           .baseArrayLayer = 0,

@@ -9,11 +9,13 @@ namespace engine {
 // ---------------------------------------------------------------------------: Context
 
 // Per-frame state handed to every render pass. target_* points at the current
-// swapchain image; additional views (depth, G-Buffer, ...) will extend this
-// struct when we grow the pipeline beyond a single forward pass.
+// swapchain image; depth_* points at the matching swapchain-sized depth buffer.
+// Additional views (G-Buffer, shadow map, ...) will extend this struct when we
+// grow the pipeline.
 export struct RenderContext {
   vk::raii::CommandBuffer& cmd;
   vk::ImageView target_view;
+  vk::ImageView depth_view = nullptr;
   vk::Extent2D target_extent;
   std::uint32_t frame_index = 0;
 };
