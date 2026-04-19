@@ -195,6 +195,11 @@ export class CameraComponent : public Component {
     proj_dirty_ = true;
   }
 
+  void SetFov(float fov_radians) {
+    fov_ = fov_radians;
+    proj_dirty_ = true;
+  }
+
   float GetAspect() const { return aspect_; }
   float GetFov() const { return fov_; }
 

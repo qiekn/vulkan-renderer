@@ -15,6 +15,7 @@ export struct RenderContext {
   vk::raii::CommandBuffer& cmd;
   vk::ImageView target_view;
   vk::Extent2D target_extent;
+  std::uint32_t frame_index = 0;
 };
 
 // ---------------------------------------------------------------------------: RenderPass

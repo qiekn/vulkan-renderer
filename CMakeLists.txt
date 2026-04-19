@@ -70,7 +70,7 @@ function (add_slang_shader_target TARGET)
   add_custom_command (
           OUTPUT ${SLANG_OUTPUT}
           COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_BINARY_DIR}
-          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${SLANG_OUTPUT}
+          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -matrix-layout-column-major -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${SLANG_OUTPUT}
           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
           DEPENDS ${SHADER_SOURCES}
           COMMENT "Compiling Slang Shaders"

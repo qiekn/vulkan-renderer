@@ -28,6 +28,8 @@ export class Renderer {
   void DrawFrame();
   void WaitIdle() { device_.GetLogicalDevice().waitIdle(); }
 
+  std::uint32_t GetCurrentFrame() const { return frame_index_; }
+
  private:
   void CreateCommandPool();
   void CreateCommandBuffers();
@@ -172,6 +174,7 @@ void Renderer::RecordCommandBuffer(vk::raii::CommandBuffer& cmd, std::uint32_t i
       .cmd = cmd,
       .target_view = *swapchain_.GetImageViews()[image_index],
       .target_extent = swapchain_.GetExtent(),
+      .frame_index = frame_index_,
   };
   passes_.Execute(ctx);
 

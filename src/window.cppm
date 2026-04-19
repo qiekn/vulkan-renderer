@@ -29,6 +29,7 @@ export class Window {
   void RequestClose() const;
   void PollEvents() const;
   void WaitEvents() const;
+  void SetCursorDisabled(bool disabled);
 
   vk::Extent2D GetFramebufferSize() const;
   std::vector<const char*> GetRequiredInstanceExtensions() const;
@@ -98,6 +99,11 @@ void Window::PollEvents() const {
 
 void Window::WaitEvents() const {
   glfwWaitEvents();
+}
+
+void Window::SetCursorDisabled(bool disabled) {
+  glfwSetInputMode(window_, GLFW_CURSOR,
+                   disabled ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 }
 
 vk::Extent2D Window::GetFramebufferSize() const {

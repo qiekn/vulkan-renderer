@@ -13,7 +13,8 @@ namespace engine {
 // pipeline with a single color attachment and no vertex input.
 export class Pipeline {
  public:
-  Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format);
+  Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format,
+           vk::DescriptorSetLayout descriptor_set_layout = nullptr);
 
   Pipeline(const Pipeline&) = delete;
   Pipeline& operator=(const Pipeline&) = delete;
@@ -31,7 +32,8 @@ export class Pipeline {
 
 // ---------------------------------------------------------------------------: Implementation
 
-Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format)
+Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format,
+                   vk::DescriptorSetLayout descriptor_set_layout)
     : device_(device) {
   std::array<vk::PipelineShaderStageCreateInfo, 2> stages{
       vk::PipelineShaderStageCreateInfo{
@@ -91,8 +93,13 @@ Pipeline::Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format co
       .pDynamicStates = dynamic_states.data(),
   };
 
-  // No descriptors, no push constants yet.
+  // Descriptor set layout is passed in when the pipeline needs UBOs/samplers;
+  // nullptr means no descriptors bound.
   vk::PipelineLayoutCreateInfo layout_info{};
+  if (descriptor_set_layout) {
+    layout_info.setLayoutCount = 1;
+    layout_info.pSetLayouts = &descriptor_set_layout;
+  }
   layout_ = vk::raii::PipelineLayout(device_.GetLogicalDevice(), layout_info);
 
   vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> chain{
