@@ -67,7 +67,9 @@ CMake 配置（首次或 CMakeLists.txt 变更后执行）：
 
 ## Tutorial Workflow
 
-官方教程网站 WebFetch 会返回 403，由用户手动贴入每一章正文后再实现。按官方顺序推进：
+官方教程站点（`docs.vulkan.org`）有 Cloudflare JS 挑战，WebFetch 和无头 `curl` 都会被拦。项目在 `docs/` 目录下维护一份教程 AsciiDoc 源码的本地镜像，直接从 [KhronosGroup/Vulkan-Tutorial](https://github.com/KhronosGroup/Vulkan-Tutorial) 的 `en/Building_a_Simple_Engine/` 拉取。开始新章节前，用 `docs/fetch.sh <section>` 把该节拉下来再实现。
+
+按官方顺序推进：
 
 1. Engine Architecture
 2. Camera Transformations
