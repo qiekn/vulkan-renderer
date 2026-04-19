@@ -15,12 +15,13 @@ AllowAllParametersOfDeclarationOnNextLine: false
 AllowShortBlocksOnASingleLine: Empty
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Never  # To avoid conflict, set this "Never" and each "if statement" should include brace when coding
+AllowShortIfStatementsOnASingleLine: WithoutElse  # Preserve `if (cond) stmt;` one-liners (no else branch)
 AllowShortLambdasOnASingleLine: Inline
 AllowShortLoopsOnASingleLine: false
 AlwaysBreakAfterReturnType: None
 AlwaysBreakTemplateDeclarations: Yes
 BinPackArguments: true
+BinPackParameters: false  # Keep one-param-per-line for declarations that don't fit on one line
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterCaseLabel: false

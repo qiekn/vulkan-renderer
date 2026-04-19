@@ -14,11 +14,11 @@ namespace engine {
 // hardcoded triangle via the supplied pipeline. Binds the per-frame MVP UBO
 // descriptor set before issuing the draw.
 export class ForwardPass : public RenderPass {
- public:
+public:
   ForwardPass(Pipeline& pipeline, UniformBufferSet& ubo_set)
       : RenderPass("Forward"), pipeline_(pipeline), ubo_set_(ubo_set) {}
 
- protected:
+protected:
   void BeginPass(RenderContext& ctx) override {
     vk::ClearValue clear_color = vk::ClearColorValue(std::array<float, 4>{0.01f, 0.01f, 0.03f, 1.0f});
     vk::RenderingAttachmentInfo color_attachment{
@@ -60,7 +60,7 @@ export class ForwardPass : public RenderPass {
     ctx.cmd.endRendering();
   }
 
- private:
+private:
   Pipeline& pipeline_;
   UniformBufferSet& ubo_set_;
 };

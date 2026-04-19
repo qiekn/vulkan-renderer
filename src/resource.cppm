@@ -11,7 +11,7 @@ namespace engine {
 // Abstract base for anything that loads data from disk into GPU memory.
 // Subclasses override DoLoad/DoUnload; the base tracks Id + loaded state.
 export class Resource {
- public:
+public:
   explicit Resource(std::string id) : id_(std::move(id)) {}
   virtual ~Resource() = default;
 
@@ -39,11 +39,11 @@ export class Resource {
     loaded_ = false;
   }
 
- protected:
+protected:
   virtual bool DoLoad() = 0;
   virtual void DoUnload() = 0;
 
- private:
+private:
   std::string id_;
   bool loaded_ = false;
 };
@@ -60,7 +60,7 @@ export class ResourceManager;
 // automatically, to keep lifetime decisions explicit.
 export template <typename T>
 class ResourceHandle {
- public:
+public:
   ResourceHandle() = default;
   ResourceHandle(std::string id, ResourceManager* manager)
       : id_(std::move(id)), manager_(manager) {}
@@ -73,7 +73,7 @@ class ResourceHandle {
   T& operator*() const { return *Get(); }
   explicit operator bool() const { return IsValid(); }
 
- private:
+private:
   std::string id_;
   ResourceManager* manager_ = nullptr;
 };
@@ -85,7 +85,7 @@ class ResourceHandle {
 // args through to the constructor, allowing per-type extra parameters
 // (e.g. file path, shader stage, etc.).
 export class ResourceManager {
- public:
+public:
   ResourceManager() = default;
   ~ResourceManager() { UnloadAll(); }
 
@@ -161,7 +161,7 @@ export class ResourceManager {
     entries_.clear();
   }
 
- private:
+private:
   struct Entry {
     std::shared_ptr<Resource> resource;
     int ref_count = 0;
@@ -185,13 +185,13 @@ T* ResourceHandle<T>::Get() const {
 // when the resource is unloaded; keep the handle alive at least as long as
 // any pipeline that was built from it.
 export class ShaderResource : public Resource {
- public:
+public:
   ShaderResource(std::string id, Device& device, std::filesystem::path spirv_path)
       : Resource(std::move(id)), device_(device), path_(std::move(spirv_path)) {}
 
   const vk::raii::ShaderModule& GetModule() const { return module_; }
 
- protected:
+protected:
   bool DoLoad() override {
     std::ifstream file(path_, std::ios::ate | std::ios::binary);
     if (!file.is_open()) {
@@ -211,7 +211,7 @@ export class ShaderResource : public Resource {
 
   void DoUnload() override { module_ = nullptr; }
 
- private:
+private:
   Device& device_;
   std::filesystem::path path_;
   vk::raii::ShaderModule module_ = nullptr;

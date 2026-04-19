@@ -16,7 +16,7 @@ namespace engine {
 // GLFW wrapper. Publishes input/window events to the provided EventBus whenever
 // GLFW fires a callback. The bus must outlive the Window.
 export class Window {
- public:
+public:
   Window(std::uint32_t width, std::uint32_t height, std::string_view title, EventBus& bus);
   ~Window();
 
@@ -38,7 +38,7 @@ export class Window {
   bool WasResized() const { return resized_; }
   void ClearResized() { resized_ = false; }
 
- private:
+private:
   static void FramebufferResizeCallback(GLFWwindow* window, int width, int height);
   static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
   static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);

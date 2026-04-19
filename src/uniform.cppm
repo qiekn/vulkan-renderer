@@ -29,7 +29,7 @@ export struct UniformBufferObject {
 // writes the matrices via the mapped pointer; GetSet(frame) is bound by the
 // render pass for the corresponding command buffer.
 export class UniformBufferSet {
- public:
+public:
   UniformBufferSet(Device& device, std::uint32_t frame_count);
 
   UniformBufferSet(const UniformBufferSet&) = delete;
@@ -42,7 +42,7 @@ export class UniformBufferSet {
 
   void Update(std::uint32_t frame, const UniformBufferObject& ubo);
 
- private:
+private:
   std::uint32_t FindMemoryType(std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const;
 
   struct Frame {

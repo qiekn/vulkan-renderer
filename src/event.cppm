@@ -27,7 +27,7 @@ export constexpr int operator|(int a, EventCategory b) {
 // Polymorphic event interface. Concrete events inherit from EventBase<Self>
 // (CRTP) to get GetType() and Clone() for free.
 export class Event {
- public:
+public:
   virtual ~Event() = default;
 
   virtual std::type_index GetType() const = 0;
@@ -41,13 +41,13 @@ export class Event {
   bool IsHandled() const { return handled_; }
   void SetHandled(bool handled = true) { handled_ = handled; }
 
- private:
+private:
   bool handled_ = false;
 };
 
 export template <typename Derived>
 class EventBase : public Event {
- public:
+public:
   std::type_index GetType() const override { return typeid(Derived); }
 
   std::unique_ptr<Event> Clone() const override {
@@ -58,27 +58,27 @@ class EventBase : public Event {
 // ---------------------------------------------------------------------------: Window events
 
 export class WindowResizeEvent : public EventBase<WindowResizeEvent> {
- public:
+public:
   WindowResizeEvent(std::uint32_t width, std::uint32_t height) : width_(width), height_(height) {}
 
   std::uint32_t GetWidth() const { return width_; }
   std::uint32_t GetHeight() const { return height_; }
   int GetCategoryFlags() const override { return static_cast<int>(EventCategory::kWindow); }
 
- private:
+private:
   std::uint32_t width_;
   std::uint32_t height_;
 };
 
 export class WindowCloseEvent : public EventBase<WindowCloseEvent> {
- public:
+public:
   int GetCategoryFlags() const override { return static_cast<int>(EventCategory::kWindow); }
 };
 
 // ---------------------------------------------------------------------------: Keyboard events
 
 export class KeyPressEvent : public EventBase<KeyPressEvent> {
- public:
+public:
   KeyPressEvent(int key_code, int mods, bool is_repeat) : key_code_(key_code), mods_(mods), is_repeat_(is_repeat) {}
 
   int GetKeyCode() const { return key_code_; }
@@ -89,14 +89,14 @@ export class KeyPressEvent : public EventBase<KeyPressEvent> {
     return EventCategory::kInput | EventCategory::kKeyboard;
   }
 
- private:
+private:
   int key_code_;
   int mods_;
   bool is_repeat_;
 };
 
 export class KeyReleaseEvent : public EventBase<KeyReleaseEvent> {
- public:
+public:
   KeyReleaseEvent(int key_code, int mods) : key_code_(key_code), mods_(mods) {}
 
   int GetKeyCode() const { return key_code_; }
@@ -106,7 +106,7 @@ export class KeyReleaseEvent : public EventBase<KeyReleaseEvent> {
     return EventCategory::kInput | EventCategory::kKeyboard;
   }
 
- private:
+private:
   int key_code_;
   int mods_;
 };
@@ -114,7 +114,7 @@ export class KeyReleaseEvent : public EventBase<KeyReleaseEvent> {
 // ---------------------------------------------------------------------------: Mouse events
 
 export class MouseMoveEvent : public EventBase<MouseMoveEvent> {
- public:
+public:
   MouseMoveEvent(double x, double y) : x_(x), y_(y) {}
 
   double GetX() const { return x_; }
@@ -124,13 +124,13 @@ export class MouseMoveEvent : public EventBase<MouseMoveEvent> {
     return EventCategory::kInput | EventCategory::kMouse;
   }
 
- private:
+private:
   double x_;
   double y_;
 };
 
 export class MouseScrollEvent : public EventBase<MouseScrollEvent> {
- public:
+public:
   MouseScrollEvent(double x_offset, double y_offset) : x_offset_(x_offset), y_offset_(y_offset) {}
 
   double GetXOffset() const { return x_offset_; }
@@ -140,13 +140,13 @@ export class MouseScrollEvent : public EventBase<MouseScrollEvent> {
     return EventCategory::kInput | EventCategory::kMouse;
   }
 
- private:
+private:
   double x_offset_;
   double y_offset_;
 };
 
 export class MouseButtonPressEvent : public EventBase<MouseButtonPressEvent> {
- public:
+public:
   MouseButtonPressEvent(int button, int mods) : button_(button), mods_(mods) {}
 
   int GetButton() const { return button_; }
@@ -156,13 +156,13 @@ export class MouseButtonPressEvent : public EventBase<MouseButtonPressEvent> {
     return EventCategory::kInput | EventCategory::kMouse;
   }
 
- private:
+private:
   int button_;
   int mods_;
 };
 
 export class MouseButtonReleaseEvent : public EventBase<MouseButtonReleaseEvent> {
- public:
+public:
   MouseButtonReleaseEvent(int button, int mods) : button_(button), mods_(mods) {}
 
   int GetButton() const { return button_; }
@@ -172,7 +172,7 @@ export class MouseButtonReleaseEvent : public EventBase<MouseButtonReleaseEvent>
     return EventCategory::kInput | EventCategory::kMouse;
   }
 
- private:
+private:
   int button_;
   int mods_;
 };
@@ -180,7 +180,7 @@ export class MouseButtonReleaseEvent : public EventBase<MouseButtonReleaseEvent>
 // ---------------------------------------------------------------------------: Listener
 
 export class EventListener {
- public:
+public:
   virtual ~EventListener() = default;
   virtual void OnEvent(Event& event) = 0;
 };
@@ -190,7 +190,7 @@ export class EventListener {
 // Type-safe dispatch: call handler only when the event's runtime type matches T.
 // Handler signature: bool(T&) — return true to mark event handled.
 export class EventDispatcher {
- public:
+public:
   explicit EventDispatcher(Event& event) : event_(event) {}
 
   template <typename T, typename F>
@@ -204,7 +204,7 @@ export class EventDispatcher {
     return false;
   }
 
- private:
+private:
   Event& event_;
 };
 
@@ -213,7 +213,7 @@ export class EventDispatcher {
 // Minimal event bus with immediate dispatch. Listeners are raw pointers, so
 // callers are responsible for unregistering before destruction.
 export class EventBus {
- public:
+public:
   void AddListener(EventListener* listener) {
     if (listener != nullptr) {
       listeners_.push_back(listener);
@@ -236,7 +236,7 @@ export class EventBus {
     }
   }
 
- private:
+private:
   std::vector<EventListener*> listeners_;
 };
 

@@ -12,7 +12,7 @@ namespace engine {
 // shader module (containing vertMain + fragMain entry points) and builds a
 // pipeline with a single color attachment and no vertex input.
 export class Pipeline {
- public:
+public:
   Pipeline(Device& device, vk::ShaderModule shader_module, vk::Format color_format,
            vk::DescriptorSetLayout descriptor_set_layout = nullptr);
 
@@ -24,7 +24,7 @@ export class Pipeline {
   const vk::raii::Pipeline& GetHandle() const { return pipeline_; }
   const vk::raii::PipelineLayout& GetLayout() const { return layout_; }
 
- private:
+private:
   Device& device_;
   vk::raii::PipelineLayout layout_ = nullptr;
   vk::raii::Pipeline pipeline_ = nullptr;

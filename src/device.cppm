@@ -32,7 +32,7 @@ inline constexpr std::array kRequiredDeviceExtensions = {
 // A single engine::Device owns everything needed to construct higher-level
 // Vulkan objects (swapchain, pipelines, command pools, ...).
 export class Device {
- public:
+public:
   explicit Device(Window& window);
 
   Device(const Device&) = delete;
@@ -48,7 +48,7 @@ export class Device {
   const vk::raii::Queue& GetGraphicsQueue() const { return graphics_queue_; }
   std::uint32_t GetGraphicsQueueFamily() const { return graphics_queue_family_; }
 
- private:
+private:
   void CreateInstance();
   void SetupDebugMessenger();
   void PickPhysicalDevice();

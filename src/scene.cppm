@@ -17,7 +17,7 @@ export class Entity;
 // ---------------------------------------------------------------------------: Component
 
 export class Component {
- public:
+public:
   virtual ~Component() = default;
 
   virtual void OnAttach() {}
@@ -26,7 +26,7 @@ export class Component {
 
   Entity* GetOwner() const { return owner_; }
 
- private:
+private:
   friend class Entity;
   void SetOwner(Entity* owner) { owner_ = owner; }
 
@@ -36,7 +36,7 @@ export class Component {
 // ---------------------------------------------------------------------------: Entity
 
 export class Entity {
- public:
+public:
   explicit Entity(std::string name) : name_(std::move(name)) {}
 
   Entity(const Entity&) = delete;
@@ -88,7 +88,7 @@ export class Entity {
     }
   }
 
- private:
+private:
   std::string name_;
   bool active_ = true;
   std::unordered_map<std::type_index, std::unique_ptr<Component>> components_;
@@ -97,7 +97,7 @@ export class Entity {
 // ---------------------------------------------------------------------------: Scene
 
 export class Scene {
- public:
+public:
   Scene() = default;
 
   Scene(const Scene&) = delete;
@@ -128,7 +128,7 @@ export class Scene {
 
   const std::vector<std::unique_ptr<Entity>>& GetEntities() const { return entities_; }
 
- private:
+private:
   std::vector<std::unique_ptr<Entity>> entities_;
 };
 
@@ -137,7 +137,7 @@ export class Scene {
 // Affine transform. Matrix is lazily recomputed on query when any setter was
 // called since the last cache.
 export class TransformComponent : public Component {
- public:
+public:
   const glm::vec3& GetPosition() const { return position_; }
   const glm::quat& GetRotation() const { return rotation_; }
   const glm::vec3& GetScale() const { return scale_; }
@@ -167,7 +167,7 @@ export class TransformComponent : public Component {
     return matrix_;
   }
 
- private:
+private:
   glm::vec3 position_ = glm::vec3(0.0f);
   glm::quat rotation_ = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
   glm::vec3 scale_ = glm::vec3(1.0f);
@@ -181,7 +181,7 @@ export class TransformComponent : public Component {
 // Reads owning entity's TransformComponent for the view matrix; projection is
 // set explicitly by the caller (SetPerspective / SetAspect).
 export class CameraComponent : public Component {
- public:
+public:
   void SetPerspective(float fov_radians, float aspect, float near_plane, float far_plane) {
     fov_ = fov_radians;
     aspect_ = aspect;
@@ -224,7 +224,7 @@ export class CameraComponent : public Component {
     return proj_;
   }
 
- private:
+private:
   float fov_ = glm::radians(60.0f);
   float aspect_ = 16.0f / 9.0f;
   float near_ = 0.1f;

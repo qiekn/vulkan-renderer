@@ -15,7 +15,7 @@ namespace engine {
 // call. Layout transitions around the swapchain image happen here; everything
 // between beginRendering and endRendering is delegated to RenderPassManager.
 export class Renderer {
- public:
+public:
   static constexpr std::uint32_t kMaxFramesInFlight = 2;
 
   Renderer(Window& window, Device& device, Swapchain& swapchain, RenderPassManager& passes);
@@ -30,7 +30,7 @@ export class Renderer {
 
   std::uint32_t GetCurrentFrame() const { return frame_index_; }
 
- private:
+private:
   void CreateCommandPool();
   void CreateCommandBuffers();
   void CreateSyncObjects();

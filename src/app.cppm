@@ -37,7 +37,7 @@ constexpr std::string_view kTriangleShaderPath = "assets/shaders/slang.spv";
 
 // Esc closes, C dumps camera matrices, resize updates aspect.
 class AppListener : public engine::EventListener {
- public:
+public:
   AppListener(engine::Window& window, engine::CameraComponent& camera)
       : window_(window), camera_(camera) {}
 
@@ -66,7 +66,7 @@ class AppListener : public engine::EventListener {
     });
   }
 
- private:
+private:
   engine::Window& window_;
   engine::CameraComponent& camera_;
 };
@@ -74,7 +74,7 @@ class AppListener : public engine::EventListener {
 // ---------------------------------------------------------------------------: Application
 
 export class Application {
- public:
+public:
   void Run() {
     engine::EventBus event_bus;
     engine::Window window(kWindowWidth, kWindowHeight, kWindowTitle, event_bus);

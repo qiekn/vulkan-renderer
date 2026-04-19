@@ -24,7 +24,7 @@ export struct RenderContext {
 // beginRendering/endRendering; Render issues draws in between. Dependencies
 // are pass names — the manager runs predecessors before dependents.
 export class RenderPass {
- public:
+public:
   explicit RenderPass(std::string name) : name_(std::move(name)) {}
   virtual ~RenderPass() = default;
 
@@ -49,12 +49,12 @@ export class RenderPass {
     EndPass(ctx);
   }
 
- protected:
+protected:
   virtual void BeginPass(RenderContext& ctx) = 0;
   virtual void Render(RenderContext& ctx) = 0;
   virtual void EndPass(RenderContext& ctx) = 0;
 
- private:
+private:
   std::string name_;
   std::vector<std::string> dependencies_;
   bool enabled_ = true;
@@ -65,7 +65,7 @@ export class RenderPass {
 // Owns passes and runs them in dependency order. Topological sort is lazy —
 // recomputed only when the set of passes changes.
 export class RenderPassManager {
- public:
+public:
   RenderPassManager() = default;
 
   RenderPassManager(const RenderPassManager&) = delete;
@@ -104,7 +104,7 @@ export class RenderPassManager {
     }
   }
 
- private:
+private:
   void SortPasses() {
     sorted_.clear();
     std::unordered_set<std::string> visited;
@@ -152,7 +152,7 @@ export class RenderPassManager {
 // bounding volume we'll intersect it against the camera frustum; for now we
 // just pass through every active entity so the wiring is in place.
 export class CullingSystem {
- public:
+public:
   void Cull(const Scene& scene) {
     visible_.clear();
     for (const auto& entity : scene.GetEntities()) {
@@ -164,7 +164,7 @@ export class CullingSystem {
 
   const std::vector<Entity*>& GetVisible() const { return visible_; }
 
- private:
+private:
   std::vector<Entity*> visible_;
 };
 

@@ -22,7 +22,7 @@ namespace engine {
 // yaw/pitch Euler angles, which we write back as a quaternion on the attached
 // TransformComponent. Scroll adjusts the camera's FOV for a zoom effect.
 export class CameraController : public EventListener {
- public:
+public:
   CameraController(TransformComponent& transform, CameraComponent& camera)
       : transform_(transform), camera_(camera) {
     SyncAnglesFromTransform();
@@ -94,7 +94,7 @@ export class CameraController : public EventListener {
     });
   }
 
- private:
+private:
   // Compose rotation as yaw-around-world-Y then pitch-around-local-X. No roll.
   void ApplyRotation() {
     glm::quat yaw_quat = glm::angleAxis(glm::radians(yaw_), glm::vec3(0.0f, 1.0f, 0.0f));

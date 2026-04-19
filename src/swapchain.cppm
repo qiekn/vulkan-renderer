@@ -12,7 +12,7 @@ namespace engine {
 // Wraps vk::raii::SwapchainKHR + its image views. Recreate() tears down and
 // rebuilds, so it is safe to call on framebuffer resize.
 export class Swapchain {
- public:
+public:
   Swapchain(Window& window, Device& device);
 
   Swapchain(const Swapchain&) = delete;
@@ -29,7 +29,7 @@ export class Swapchain {
   vk::Extent2D GetExtent() const { return extent_; }
   std::uint32_t GetImageCount() const { return static_cast<std::uint32_t>(images_.size()); }
 
- private:
+private:
   void Create();
   void CreateImageViews();
   vk::SurfaceFormatKHR ChooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& formats) const;
