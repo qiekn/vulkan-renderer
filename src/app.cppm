@@ -18,6 +18,8 @@ import engine.pipeline;
 import engine.renderer;
 import engine.scene;
 import engine.resource;
+import engine.render_pass;
+import engine.forward_pass;
 
 namespace app {
 
@@ -85,7 +87,11 @@ export class Application {
     }
 
     engine::Pipeline pipeline(device, *triangle_shader->GetModule(), swapchain.GetImageFormat());
-    engine::Renderer renderer(window, device, swapchain, pipeline);
+
+    engine::RenderPassManager pass_manager;
+    pass_manager.AddPass<engine::ForwardPass>(pipeline);
+
+    engine::Renderer renderer(window, device, swapchain, pass_manager);
 
     engine::Scene scene;
 

@@ -5,19 +5,20 @@ import std;
 import engine.window;
 import engine.device;
 import engine.swapchain;
-import engine.pipeline;
+import engine.render_pass;
 
 namespace engine {
 
 // ---------------------------------------------------------------------------: Renderer
 
 // Owns per-frame command buffers + sync objects and drives a single DrawFrame
-// call. Uses dynamic rendering directly against the swapchain image.
+// call. Layout transitions around the swapchain image happen here; everything
+// between beginRendering and endRendering is delegated to RenderPassManager.
 export class Renderer {
  public:
   static constexpr std::uint32_t kMaxFramesInFlight = 2;
 
-  Renderer(Window& window, Device& device, Swapchain& swapchain, Pipeline& pipeline);
+  Renderer(Window& window, Device& device, Swapchain& swapchain, RenderPassManager& passes);
 
   Renderer(const Renderer&) = delete;
   Renderer& operator=(const Renderer&) = delete;
@@ -44,7 +45,7 @@ export class Renderer {
   Window& window_;
   Device& device_;
   Swapchain& swapchain_;
-  Pipeline& pipeline_;
+  RenderPassManager& passes_;
 
   vk::raii::CommandPool command_pool_ = nullptr;
   std::vector<vk::raii::CommandBuffer> command_buffers_;
@@ -56,8 +57,8 @@ export class Renderer {
 
 // ---------------------------------------------------------------------------: Implementation
 
-Renderer::Renderer(Window& window, Device& device, Swapchain& swapchain, Pipeline& pipeline)
-    : window_(window), device_(device), swapchain_(swapchain), pipeline_(pipeline) {
+Renderer::Renderer(Window& window, Device& device, Swapchain& swapchain, RenderPassManager& passes)
+    : window_(window), device_(device), swapchain_(swapchain), passes_(passes) {
   CreateCommandPool();
   CreateCommandBuffers();
   CreateSyncObjects();
@@ -81,9 +82,6 @@ void Renderer::CreateCommandBuffers() {
 }
 
 void Renderer::CreateSyncObjects() {
-  // image_available / in_flight are per-in-flight-frame; render_finished is
-  // per-swapchain-image so that present never waits on a semaphore that
-  // belongs to a different image.
   for (std::uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
     image_available_semaphores_.emplace_back(device_.GetLogicalDevice(), vk::SemaphoreCreateInfo{});
     in_flight_fences_.emplace_back(device_.GetLogicalDevice(),
@@ -97,14 +95,12 @@ void Renderer::CreateSyncObjects() {
 void Renderer::DrawFrame() {
   const auto& dev = device_.GetLogicalDevice();
 
-  // 1. Wait for this frame slot to be free.
   auto wait_result = dev.waitForFences(*in_flight_fences_[frame_index_], vk::True,
                                        std::numeric_limits<std::uint64_t>::max());
   if (wait_result != vk::Result::eSuccess) {
     throw std::runtime_error("Failed to wait for in-flight fence");
   }
 
-  // 2. Acquire next swapchain image.
   std::uint32_t image_index = 0;
   try {
     auto [result, index] = swapchain_.GetHandle().acquireNextImage(
@@ -124,12 +120,10 @@ void Renderer::DrawFrame() {
 
   dev.resetFences(*in_flight_fences_[frame_index_]);
 
-  // 3. Record commands for this frame.
   auto& cmd = command_buffers_[frame_index_];
   cmd.reset();
   RecordCommandBuffer(cmd, image_index);
 
-  // 4. Submit.
   vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
   vk::SubmitInfo submit_info{
       .waitSemaphoreCount = 1,
@@ -142,7 +136,6 @@ void Renderer::DrawFrame() {
   };
   device_.GetGraphicsQueue().submit(submit_info, *in_flight_fences_[frame_index_]);
 
-  // 5. Present.
   vk::PresentInfoKHR present_info{
       .waitSemaphoreCount = 1,
       .pWaitSemaphores = &*render_finished_semaphores_[image_index],
@@ -169,48 +162,19 @@ void Renderer::DrawFrame() {
 void Renderer::RecordCommandBuffer(vk::raii::CommandBuffer& cmd, std::uint32_t image_index) {
   cmd.begin(vk::CommandBufferBeginInfo{});
 
-  // Undefined → ColorAttachmentOptimal before rendering.
   TransitionImageLayout(cmd, swapchain_.GetImages()[image_index],
                         vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
                         vk::AccessFlags2{}, vk::AccessFlagBits2::eColorAttachmentWrite,
                         vk::PipelineStageFlagBits2::eTopOfPipe,
                         vk::PipelineStageFlagBits2::eColorAttachmentOutput);
 
-  vk::ClearValue clear_color = vk::ClearColorValue(std::array<float, 4>{0.01f, 0.01f, 0.03f, 1.0f});
-  vk::RenderingAttachmentInfo color_attachment{
-      .imageView = *swapchain_.GetImageViews()[image_index],
-      .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-      .loadOp = vk::AttachmentLoadOp::eClear,
-      .storeOp = vk::AttachmentStoreOp::eStore,
-      .clearValue = clear_color,
+  RenderContext ctx{
+      .cmd = cmd,
+      .target_view = *swapchain_.GetImageViews()[image_index],
+      .target_extent = swapchain_.GetExtent(),
   };
+  passes_.Execute(ctx);
 
-  vk::RenderingInfo rendering_info{
-      .renderArea = vk::Rect2D{{0, 0}, swapchain_.GetExtent()},
-      .layerCount = 1,
-      .colorAttachmentCount = 1,
-      .pColorAttachments = &color_attachment,
-  };
-
-  cmd.beginRendering(rendering_info);
-  cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_.GetHandle());
-
-  auto extent = swapchain_.GetExtent();
-  vk::Viewport viewport{
-      .x = 0.0f,
-      .y = 0.0f,
-      .width = static_cast<float>(extent.width),
-      .height = static_cast<float>(extent.height),
-      .minDepth = 0.0f,
-      .maxDepth = 1.0f,
-  };
-  cmd.setViewport(0, viewport);
-  cmd.setScissor(0, vk::Rect2D{{0, 0}, extent});
-
-  cmd.draw(3, 1, 0, 0);
-  cmd.endRendering();
-
-  // ColorAttachmentOptimal → PresentSrcKHR before presenting.
   TransitionImageLayout(cmd, swapchain_.GetImages()[image_index],
                         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR,
                         vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlags2{},
