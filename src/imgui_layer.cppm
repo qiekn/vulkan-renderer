@@ -104,8 +104,9 @@ ImGuiLayer::ImGuiLayer(Window& window, Device& device, Swapchain& swapchain)
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-  // Don't leave an imgui.ini next to the exe — keeps the working dir clean.
-  io.IniFilename = nullptr;
+  // Leave io.IniFilename at its default ("imgui.ini" in cwd = build/) so
+  // window positions, sizes, and dock layout survive across runs. build/ is
+  // gitignored, so the file stays out of version control.
 
   // DPI-scaled fonts + rounded style + custom dark palette, mirrored from
   // ../opengl-lab so the two engines have the same look & feel. The TTFs are
@@ -122,6 +123,8 @@ ImGuiLayer::ImGuiLayer(Window& window, Device& device, Swapchain& swapchain)
   ImGuiStyle& style = ImGui::GetStyle();
   style.WindowRounding = 8.0f;
   style.FrameRounding = 8.0f;
+  // Hide the collapse-triangle button on every window title bar.
+  style.WindowMenuButtonPosition = ImGuiDir_None;
   style.ScaleAllSizes(scale);
   ApplyDarkThemePalette();
 
