@@ -30,6 +30,7 @@ import engine.uniform;
 import engine.camera_controller;
 import engine.imgui_layer;
 import engine.imgui_pass;
+import engine.audio;
 
 namespace app {
 
@@ -41,6 +42,10 @@ constexpr std::string_view kWindowTitle = "Vulkan Engine";
 constexpr std::string_view kPbrShaderId = "pbr";
 constexpr std::string_view kPbrShaderPath = "assets/shaders/slang.spv";
 constexpr std::string_view kDefaultModelPath = "assets/models/damaged_helmet/DamagedHelmet.glb";
+constexpr std::string_view kAmbientClipId = "ambient";
+constexpr std::string_view kAmbientClipPath = "assets/sounds/ambient.ogg";
+constexpr std::string_view kPingClipId = "ping";
+constexpr std::string_view kPingClipPath = "assets/sounds/ping.wav";
 
 // ---------------------------------------------------------------------------: Listener
 
@@ -98,6 +103,13 @@ public:
     engine::EventBus event_bus;
     engine::Window window(kWindowWidth, kWindowHeight, kWindowTitle, event_bus);
     engine::Device device(window);
+    // AudioSystem is intentionally declared before Scene: stack destruction is
+    // reverse order, so Scene (and its AudioSourceComponents) must tear down
+    // first — before the AudioSystem uninit's the ma_sounds they point at.
+    engine::AudioSystem audio;
+    audio.LoadClip(std::string(kAmbientClipId), std::filesystem::path(kAmbientClipPath));
+    audio.LoadClip(std::string(kPingClipId), std::filesystem::path(kPingClipPath));
+
     engine::Swapchain swapchain(window, device);
 
     engine::ResourceManager resources;
@@ -159,6 +171,7 @@ public:
     engine::Entity* camera_entity = scene.CreateEntity("Camera");
     auto* camera_transform = camera_entity->AddComponent<engine::TransformComponent>();
     auto* camera = camera_entity->AddComponent<engine::CameraComponent>();
+    camera_entity->AddComponent<engine::AudioListenerComponent>(&audio.GetListener());
     camera_transform->SetPosition(glm::vec3(0.0f, 0.0f, 3.5f));
     auto extent = swapchain.GetExtent();
     camera->SetAspect(static_cast<float>(extent.width) / static_cast<float>(extent.height));
@@ -194,6 +207,20 @@ public:
     bool animate_rotation = true;
     bool play_animation = true;
     int active_animation = 0;
+    float master_volume = 0.5f;
+    audio.SetMasterVolume(master_volume);
+
+    // Ambient loop source — parked at origin so spatial attenuation varies as
+    // the camera moves around the scene. If the clip wasn't found (missing
+    // asset), CreateSource returns nullptr and the entity stays silent.
+    engine::Entity* ambient_entity = scene.CreateEntity("AmbientAudio");
+    ambient_entity->AddComponent<engine::TransformComponent>()
+        ->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+    if (auto* ambient_src = audio.CreateSource(std::string(kAmbientClipId))) {
+      ambient_src->SetLooping(true);
+      ambient_src->Play();
+      ambient_entity->AddComponent<engine::AudioSourceComponent>(ambient_src);
+    }
 
     // Flat list of object instances — tutorial-style layout. Each entry becomes
     // one world-space model matrix per frame; ForwardPass walks the scene graph
@@ -245,6 +272,7 @@ public:
       }
 
       scene.Update(delta);
+      audio.Update(delta);
 
       imgui_layer.BeginFrame();
       if (ui_mode) {
@@ -293,6 +321,18 @@ public:
         ImGui::Text("%.1f FPS (%.2f ms)", ImGui::GetIO().Framerate,
                     1000.0f / ImGui::GetIO().Framerate);
         ImGui::Checkbox("Show ImGui demo", &show_demo);
+        ImGui::End();
+
+        ImGui::Begin("Audio");
+        if (ImGui::SliderFloat("Master volume", &master_volume, 0.0f, 1.0f)) {
+          audio.SetMasterVolume(master_volume);
+        }
+        if (ImGui::Button("Play Ping")) {
+          audio.PlayOneShot(std::filesystem::path(kPingClipPath));
+        }
+        glm::vec3 listener_pos = camera_transform->GetPosition();
+        ImGui::Text("Listener: (%.2f, %.2f, %.2f)",
+                    listener_pos.x, listener_pos.y, listener_pos.z);
         ImGui::End();
 
         if (show_demo) {
