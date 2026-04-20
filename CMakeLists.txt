@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
 
 include(cmake/EnableCxxImportStd.cmake)
-project(vulkan_engine LANGUAGES CXX)
+project(vulkan_engine LANGUAGES C CXX)
 
 set(CMAKE_CXX_MODULE_STD ON)
 
@@ -32,6 +32,13 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/deps/glm)
 set(TINYGLTF_DIR ${CMAKE_SOURCE_DIR}/deps/tinygltf)
 add_library(tinygltf STATIC ${TINYGLTF_DIR}/tiny_gltf.cc)
 target_include_directories(tinygltf PUBLIC ${TINYGLTF_DIR})
+
+# miniaudio — single-header audio lib. Upstream already provides a miniaudio.c
+# that defines MINIAUDIO_IMPLEMENTATION before including the header, so we just
+# compile that one TU into a static lib.
+set(MINIAUDIO_DIR ${CMAKE_SOURCE_DIR}/deps/miniaudio)
+add_library(miniaudio STATIC ${MINIAUDIO_DIR}/miniaudio.c)
+target_include_directories(miniaudio PUBLIC ${MINIAUDIO_DIR})
 
 # Dear ImGui (docking branch) — upstream ships no CMakeLists, so we build it ourselves.
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/deps/imgui)
@@ -120,6 +127,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   glm
   imgui
   tinygltf
+  miniaudio
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
