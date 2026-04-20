@@ -126,9 +126,15 @@ public:
     engine::Pipeline pipeline(device, pipeline_config);
 
     engine::MaterialPushConstants material{
-        .base_color = glm::vec4(0.9f, 0.1f, 0.05f, 1.0f),
-        .metallic = 0.1f,
-        .roughness = 0.35f,
+        .base_color_factor = glm::vec4(0.9f, 0.1f, 0.05f, 1.0f),
+        .emissive_factor = glm::vec4(0.0f),
+        .metallic_factor = 0.1f,
+        .roughness_factor = 0.35f,
+        .base_color_tex_set = -1,
+        .metallic_roughness_tex_set = -1,
+        .normal_tex_set = -1,
+        .occlusion_tex_set = -1,
+        .emissive_tex_set = -1,
     };
 
     engine::RenderPassManager pass_manager;
@@ -204,9 +210,9 @@ public:
       imgui_layer.BeginFrame();
       if (ui_mode) {
         ImGui::Begin("Material");
-        ImGui::ColorEdit3("Base Color", &material.base_color.x);
-        ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
-        ImGui::SliderFloat("Roughness", &material.roughness, 0.04f, 1.0f);
+        ImGui::ColorEdit3("Base Color", &material.base_color_factor.x);
+        ImGui::SliderFloat("Metallic", &material.metallic_factor, 0.0f, 1.0f);
+        ImGui::SliderFloat("Roughness", &material.roughness_factor, 0.04f, 1.0f);
         ImGui::End();
 
         ImGui::Begin("Camera");

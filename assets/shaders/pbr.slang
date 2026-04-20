@@ -1,6 +1,8 @@
-// Simplified PBR: Cook-Torrance BRDF with 4 point lights, Reinhard tonemap,
-// gamma 2.2. Material comes in via push constants (baseColor/metallic/roughness),
-// no textures yet -- those land in the Loading_Models chapter with UV + tangent.
+// PBR shader for glTF models: Cook-Torrance BRDF, 4 point lights, textured
+// base color / metallic-roughness / normal / occlusion / emissive. Material
+// factors and per-map set flags come in via push constants; the fallback
+// texture lets us sample every binding unconditionally even when a map is
+// missing, and the flag tells the shader whether to actually use the result.
 
 struct UniformBufferObject {
     float4x4 model;
@@ -19,24 +21,42 @@ struct UniformBufferObject {
 ConstantBuffer<UniformBufferObject> ubo;
 
 struct Material {
-    float4 base_color;
-    float  metallic;
-    float  roughness;
+    float4 base_color_factor;
+    float4 emissive_factor;       // xyz used
+    float  metallic_factor;
+    float  roughness_factor;
+    int    base_color_tex_set;
+    int    metallic_roughness_tex_set;
+    int    normal_tex_set;
+    int    occlusion_tex_set;
+    int    emissive_tex_set;
     float  _pad0;
-    float  _pad1;
 };
 
 [[vk::push_constant]] Material material;
 
+// Per-material set: five combined image-samplers in a fixed order. Bind every
+// slot on the C++ side, substituting a 1x1 white fallback where the glTF
+// material has no texture.
+[[vk::binding(0, 1)]] Sampler2D base_color_map;
+[[vk::binding(1, 1)]] Sampler2D metallic_roughness_map;
+[[vk::binding(2, 1)]] Sampler2D normal_map;
+[[vk::binding(3, 1)]] Sampler2D occlusion_map;
+[[vk::binding(4, 1)]] Sampler2D emissive_map;
+
 struct VertexInput {
     float3 position : POSITION;
     float3 normal   : NORMAL;
+    float2 uv       : TEXCOORD0;
+    float4 tangent  : TANGENT;
 };
 
 struct VertexOutput {
     float4 pos         : SV_Position;
     float3 world_pos;
     float3 world_normal;
+    float2 uv;
+    float4 world_tangent;  // xyz in world space, w = bitangent sign from glTF
 };
 
 [shader("vertex")]
@@ -44,10 +64,12 @@ VertexOutput vertMain(VertexInput input) {
     VertexOutput output;
     float4 world = mul(ubo.model, float4(input.position, 1.0));
     output.world_pos = world.xyz;
-    // Cube is uniformly scaled so model's upper-left 3x3 works directly as a
-    // normal matrix. Swap to transpose(inverse(model)) once meshes get non-
-    // uniform scale.
-    output.world_normal = normalize(mul((float3x3)ubo.model, input.normal));
+    // Upper-left 3x3 works as a normal matrix while scale stays uniform; once
+    // nodes get non-uniform scale we'll want transpose(inverse(model)).
+    float3x3 upper = (float3x3)ubo.model;
+    output.world_normal = normalize(mul(upper, input.normal));
+    output.world_tangent = float4(normalize(mul(upper, input.tangent.xyz)), input.tangent.w);
+    output.uv = input.uv;
     output.pos = mul(ubo.proj, mul(ubo.view, world));
     return output;
 }
@@ -78,16 +100,53 @@ float3 FresnelSchlick(float cos_theta, float3 f0) {
     return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// Reconstructs a world-space normal from the tangent-space normal map sample
+// when the material actually supplies one; otherwise returns the interpolated
+// vertex normal unchanged.
+float3 GetNormal(VertexOutput input) {
+    float3 n = normalize(input.world_normal);
+    if (material.normal_tex_set < 0) {
+        return n;
+    }
+    float3 sampled = normal_map.Sample(input.uv).xyz * 2.0 - 1.0;
+    float3 t = normalize(input.world_tangent.xyz);
+    float3 b = normalize(cross(n, t)) * input.world_tangent.w;
+    float3x3 tbn = float3x3(t, b, n);
+    return normalize(mul(sampled, tbn));
+}
+
 [shader("fragment")]
 float4 fragMain(VertexOutput input) : SV_Target {
-    float3 n = normalize(input.world_normal);
+    // Base color: sample + factor when the map is present, factor alone otherwise.
+    float4 base_color = material.base_color_factor;
+    if (material.base_color_tex_set >= 0) {
+        base_color *= base_color_map.Sample(input.uv);
+    }
+
+    // glTF metallic-roughness convention: B = metallic, G = roughness.
+    float metallic = material.metallic_factor;
+    float roughness = material.roughness_factor;
+    if (material.metallic_roughness_tex_set >= 0) {
+        float4 mr = metallic_roughness_map.Sample(input.uv);
+        metallic *= mr.b;
+        roughness *= mr.g;
+    }
+
+    float ao = 1.0;
+    if (material.occlusion_tex_set >= 0) {
+        ao = occlusion_map.Sample(input.uv).r;
+    }
+
+    float3 emissive = material.emissive_factor.rgb;
+    if (material.emissive_tex_set >= 0) {
+        emissive *= emissive_map.Sample(input.uv).rgb;
+    }
+
+    float3 n = GetNormal(input);
     float3 v = normalize(ubo.cam_pos.xyz - input.world_pos);
 
-    // f0 is 0.04 for dielectrics, the base color for metals.
-    float3 albedo   = material.base_color.rgb;
-    float  metal    = material.metallic;
-    float  rough    = material.roughness;
-    float3 f0       = lerp(float3(0.04, 0.04, 0.04), albedo, metal);
+    float3 albedo = base_color.rgb;
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
 
     float3 lo = float3(0.0, 0.0, 0.0);
     for (int i = 0; i < 4; ++i) {
@@ -100,30 +159,27 @@ float4 fragMain(VertexOutput input) : SV_Target {
         float  attenuation = 1.0 / (distance * distance);
         float3 radiance    = light_col * attenuation;
 
-        float  ndf = DistributionGGX(n, h, rough);
-        float  g   = GeometrySmith(n, v, l, rough);
+        float  ndf = DistributionGGX(n, h, roughness);
+        float  g   = GeometrySmith(n, v, l, roughness);
         float3 f   = FresnelSchlick(max(dot(h, v), 0.0), f0);
 
         float3 numerator   = ndf * g * f;
         float  denominator = 4.0 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0) + 0.0001;
         float3 specular    = numerator / denominator;
 
-        // ks = f, kd = (1 - ks) * (1 - metallic) — metals have no diffuse term.
         float3 ks = f;
-        float3 kd = (float3(1.0, 1.0, 1.0) - ks) * (1.0 - metal);
+        float3 kd = (float3(1.0, 1.0, 1.0) - ks) * (1.0 - metallic);
 
         float n_dot_l = max(dot(n, l), 0.0);
         lo += (kd * albedo / kPi + specular) * radiance * n_dot_l;
     }
 
-    // Tiny ambient term so back faces aren't pitch black before IBL lands.
-    float3 ambient = float3(0.03, 0.03, 0.03) * albedo;
-    float3 color   = ambient + lo;
+    float3 ambient = float3(0.03, 0.03, 0.03) * albedo * ao;
+    float3 color   = ambient + lo + emissive;
 
-    // Exposure + Reinhard tonemap, then gamma.
     color = color * ubo.exposure;
     color = color / (color + float3(1.0, 1.0, 1.0));
     color = pow(color, float3(1.0 / ubo.gamma, 1.0 / ubo.gamma, 1.0 / ubo.gamma));
 
-    return float4(color, material.base_color.a);
+    return float4(color, base_color.a);
 }

@@ -30,13 +30,20 @@ export struct UniformBufferObject {
 };
 
 // Material knobs shipped as push constants per draw. The BRDF in pbr.slang reads
-// base color, metallic, and roughness straight out of this block.
+// base color, metallic, and roughness straight out of this block. Texture-set
+// flags encode "has this map?" (-1 = no): the shader falls back to the factor
+// value when the flag is negative so missing maps degrade cleanly.
 export struct MaterialPushConstants {
-  glm::vec4 base_color;
-  float metallic;
-  float roughness;
+  glm::vec4 base_color_factor;
+  glm::vec4 emissive_factor;  // xyz = emissive RGB, w unused (keeps vec4 alignment)
+  float metallic_factor;
+  float roughness_factor;
+  int base_color_tex_set;
+  int metallic_roughness_tex_set;
+  int normal_tex_set;
+  int occlusion_tex_set;
+  int emissive_tex_set;
   float _pad0 = 0.0f;
-  float _pad1 = 0.0f;
 };
 
 // ---------------------------------------------------------------------------: UniformBufferSet
