@@ -140,8 +140,14 @@ void Swapchain::CreateImageViews() {
 }
 
 vk::SurfaceFormatKHR Swapchain::ChooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& formats) const {
+  // Prefer a UNORM surface with sRGB-nonlinear color space: the monitor still
+  // expects sRGB-encoded bytes, but the hardware stores whatever the shader
+  // writes verbatim. Our PBR fragment shader already applies pow(color, 1/gamma)
+  // before output, and ImGui's palette values are authored in sRGB — a SRGB
+  // format here would double-encode both and wash everything out (see UI turning
+  // uniformly gray).
   auto it = std::ranges::find_if(formats, [](const auto& f) {
-    return f.format == vk::Format::eB8G8R8A8Srgb && f.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+    return f.format == vk::Format::eB8G8R8A8Unorm && f.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
   });
   return it != formats.end() ? *it : formats.front();
 }
