@@ -173,8 +173,9 @@ bool Device::IsDeviceSuitable(const vk::raii::PhysicalDevice& pd) const {
   bool supports_vulkan_1_3 = pd.getProperties().apiVersion >= vk::ApiVersion13;
 
   auto queue_families = pd.getQueueFamilyProperties();
-  bool has_graphics = std::ranges::any_of(queue_families, [](const auto& qfp) {
-    return static_cast<bool>(qfp.queueFlags & vk::QueueFlagBits::eGraphics);
+  bool has_graphics_compute = std::ranges::any_of(queue_families, [](const auto& qfp) {
+    auto mask = vk::QueueFlagBits::eGraphics | vk::QueueFlagBits::eCompute;
+    return (qfp.queueFlags & mask) == mask;
   });
 
   auto available_extensions = pd.enumerateDeviceExtensionProperties();
@@ -190,19 +191,20 @@ bool Device::IsDeviceSuitable(const vk::raii::PhysicalDevice& pd) const {
                              && feats.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
                              && feats.get<vk::PhysicalDeviceVulkan13Features>().synchronization2;
 
-  return supports_vulkan_1_3 && has_graphics && has_required_extensions && has_required_features;
+  return supports_vulkan_1_3 && has_graphics_compute && has_required_extensions && has_required_features;
 }
 
 std::uint32_t Device::FindGraphicsQueueFamily() const {
   auto queue_families = physical_device_.getQueueFamilyProperties();
   for (std::uint32_t i = 0; i < queue_families.size(); ++i) {
     bool has_graphics = static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eGraphics);
+    bool has_compute  = static_cast<bool>(queue_families[i].queueFlags & vk::QueueFlagBits::eCompute);
     bool has_present = physical_device_.getSurfaceSupportKHR(i, *surface_) == vk::True;
-    if (has_graphics && has_present) {
+    if (has_graphics && has_compute && has_present) {
       return i;
     }
   }
-  throw std::runtime_error("No queue family with graphics + present support");
+  throw std::runtime_error("No queue family with graphics + compute + present support");
 }
 
 void Device::CreateLogicalDevice() {
