@@ -17,6 +17,40 @@ import engine.window;
 
 namespace engine {
 
+// ---------------------------------------------------------------------------: Theme
+
+// Ported from ../opengl-lab/core/core/imgui_layer.cc — neutral dark palette
+// that matches the sibling project's look so both engines feel the same.
+namespace {
+
+void ApplyDarkThemePalette() {
+  auto& colors = ImGui::GetStyle().Colors;
+  colors[ImGuiCol_WindowBg] = ImVec4{0.10f, 0.105f, 0.11f, 1.00f};
+
+  colors[ImGuiCol_Header] = ImVec4{0.20f, 0.205f, 0.21f, 1.00f};
+  colors[ImGuiCol_HeaderHovered] = ImVec4{0.30f, 0.305f, 0.31f, 1.00f};
+  colors[ImGuiCol_HeaderActive] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+
+  colors[ImGuiCol_Button] = ImVec4{0.20f, 0.205f, 0.21f, 1.00f};
+  colors[ImGuiCol_ButtonHovered] = ImVec4{0.30f, 0.305f, 0.31f, 1.00f};
+  colors[ImGuiCol_ButtonActive] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+
+  colors[ImGuiCol_FrameBg] = ImVec4{0.20f, 0.205f, 0.21f, 1.00f};
+  colors[ImGuiCol_FrameBgHovered] = ImVec4{0.30f, 0.305f, 0.31f, 1.00f};
+  colors[ImGuiCol_FrameBgActive] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+
+  colors[ImGuiCol_Tab] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+  colors[ImGuiCol_TabHovered] = ImVec4{0.38f, 0.3805f, 0.381f, 1.00f};
+  colors[ImGuiCol_TabActive] = ImVec4{0.28f, 0.2805f, 0.281f, 1.00f};
+  colors[ImGuiCol_TabUnfocused] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+  colors[ImGuiCol_TabUnfocusedActive] = ImVec4{0.20f, 0.205f, 0.21f, 1.00f};
+
+  colors[ImGuiCol_TitleBg] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+  colors[ImGuiCol_TitleBgActive] = ImVec4{0.15f, 0.1505f, 0.151f, 1.00f};
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------------------: ImGuiLayer
 
 // Owns the Dear ImGui context + the glfw/vulkan backends. Keeps a dedicated
@@ -69,9 +103,27 @@ ImGuiLayer::ImGuiLayer(Window& window, Device& device, Swapchain& swapchain)
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   // Don't leave an imgui.ini next to the exe — keeps the working dir clean.
   io.IniFilename = nullptr;
+
+  // DPI-scaled fonts + rounded style + custom dark palette, mirrored from
+  // ../opengl-lab so the two engines have the same look & feel. The TTFs are
+  // copied into assets/fonts/opensans/ and synced to build/ by sync_assets.
+  const float scale = ImGui_ImplGlfw_GetContentScaleForWindow(window.GetGlfwHandle());
+  const float font_size = 18.0f * scale;
+  io.Fonts->AddFontFromFileTTF("assets/fonts/opensans/OpenSans-Bold.ttf", font_size);
+  if (ImFont* regular = io.Fonts->AddFontFromFileTTF(
+          "assets/fonts/opensans/OpenSans-Regular.ttf", font_size)) {
+    io.FontDefault = regular;
+  }
+
   ImGui::StyleColorsDark();
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.WindowRounding = 8.0f;
+  style.FrameRounding = 8.0f;
+  style.ScaleAllSizes(scale);
+  ApplyDarkThemePalette();
 
   // install_callbacks=true: ImGui chains onto the GLFW callbacks that
   // engine::Window already installed, so KeyPressEvent/MouseMoveEvent etc.
