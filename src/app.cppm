@@ -192,6 +192,8 @@ public:
     float gamma = 2.2f;
     bool show_demo = false;
     bool animate_rotation = true;
+    bool play_animation = true;
+    int active_animation = 0;
 
     // Flat list of object instances — tutorial-style layout. Each entry becomes
     // one world-space model matrix per frame; ForwardPass walks the scene graph
@@ -235,6 +237,13 @@ public:
         animation_angle += delta * 0.5f;
       }
 
+      if (play_animation && !model.animations.empty()) {
+        const std::uint32_t anim_count = static_cast<std::uint32_t>(model.animations.size());
+        const std::uint32_t clamped =
+            std::min<std::uint32_t>(static_cast<std::uint32_t>(active_animation), anim_count - 1);
+        model.UpdateAnimation(clamped, delta);
+      }
+
       scene.Update(delta);
 
       imgui_layer.BeginFrame();
@@ -245,6 +254,19 @@ public:
                          static_cast<int>(kInstanceTransforms.size()));
         ImGui::Text("Nodes: %zu, Materials: %zu, Textures: %zu",
                     model.nodes.size(), model.materials.size(), model.textures.size());
+        if (model.animations.empty()) {
+          ImGui::TextDisabled("Animations: none");
+        } else {
+          ImGui::Checkbox("Play animation", &play_animation);
+          if (model.animations.size() > 1) {
+            ImGui::SliderInt("Animation", &active_animation, 0,
+                             static_cast<int>(model.animations.size()) - 1);
+          }
+          const auto& anim =
+              model.animations[std::min<std::size_t>(active_animation, model.animations.size() - 1)];
+          ImGui::Text("%s: %.2fs / %.2fs", anim.name.empty() ? "anim" : anim.name.c_str(),
+                      anim.current_time, anim.end);
+        }
         ImGui::End();
 
         ImGui::Begin("Camera");
