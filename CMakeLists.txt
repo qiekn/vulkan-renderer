@@ -87,22 +87,32 @@ endif()
 message(STATUS "Found slangc: ${SLANGC_EXECUTABLE}")
 
 function (add_slang_shader_target TARGET)
-  cmake_parse_arguments ("SHADER" "" "" "SOURCES" ${ARGN})
+  cmake_parse_arguments ("SHADER" "" "OUTPUT" "SOURCES;ENTRY_POINTS" ${ARGN})
 
   if (NOT SHADER_SOURCES)
     message(FATAL_ERROR "add_slang_shader_target(${TARGET}) requires SOURCES")
   endif()
+  if (NOT SHADER_OUTPUT)
+    message(FATAL_ERROR "add_slang_shader_target(${TARGET}) requires OUTPUT")
+  endif()
+  if (NOT SHADER_ENTRY_POINTS)
+    message(FATAL_ERROR "add_slang_shader_target(${TARGET}) requires ENTRY_POINTS")
+  endif()
 
-  set (ENTRY_POINTS -entry vertMain -entry fragMain)
-  set (SLANG_OUTPUT ${SHADERS_BINARY_DIR}/slang.spv)
+  set (ENTRY_POINT_ARGS "")
+  foreach (EP ${SHADER_ENTRY_POINTS})
+    list (APPEND ENTRY_POINT_ARGS -entry ${EP})
+  endforeach()
+
+  set (SLANG_OUTPUT ${SHADERS_BINARY_DIR}/${SHADER_OUTPUT})
 
   add_custom_command (
           OUTPUT ${SLANG_OUTPUT}
           COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_BINARY_DIR}
-          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -matrix-layout-column-major -fvk-use-entrypoint-name ${ENTRY_POINTS} -o ${SLANG_OUTPUT}
+          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -matrix-layout-column-major -fvk-use-entrypoint-name ${ENTRY_POINT_ARGS} -o ${SLANG_OUTPUT}
           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
           DEPENDS ${SHADER_SOURCES}
-          COMMENT "Compiling Slang Shaders"
+          COMMENT "Compiling Slang: ${SHADER_OUTPUT}"
           VERBATIM
   )
   add_custom_target (${TARGET} DEPENDS ${SLANG_OUTPUT})
@@ -111,7 +121,6 @@ endfunction()
 # -----------------------------------------------------------------------------: Targets
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS "src/*.cpp")
 file(GLOB_RECURSE MODULE_FILES CONFIGURE_DEPENDS "src/*.cppm")
-file(GLOB_RECURSE SHADER_SLANG_SOURCES CONFIGURE_DEPENDS "assets/shaders/*.slang")
 
 add_executable(${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_FILES})
@@ -141,9 +150,21 @@ add_custom_target(sync_assets ALL
   COMMENT "Syncing runtime assets to build/assets"
 )
 
-if (SHADER_SLANG_SOURCES)
-  add_slang_shader_target(shader SOURCES ${SHADER_SLANG_SOURCES})
-  add_dependencies(${PROJECT_NAME} shader)
-endif()
+# PBR graphics shader — vertex + fragment entries in one .spv so the forward
+# pipeline only loads a single module. Keep the output name (slang.spv) in sync
+# with kPbrShaderPath in src/app.cppm.
+add_slang_shader_target(shader_pbr
+  SOURCES ${CMAKE_SOURCE_DIR}/assets/shaders/pbr.slang
+  ENTRY_POINTS vertMain fragMain
+  OUTPUT slang.spv
+)
 
-add_dependencies(${PROJECT_NAME} sync_assets)
+# HRTF compute shader — separate SPV because entry points + stage are disjoint
+# from the graphics pipeline. Loaded by engine::HrtfProcessor from hrtf.spv.
+add_slang_shader_target(shader_hrtf
+  SOURCES ${CMAKE_SOURCE_DIR}/assets/shaders/hrtf.slang
+  ENTRY_POINTS computeMain
+  OUTPUT hrtf.spv
+)
+
+add_dependencies(${PROJECT_NAME} shader_pbr shader_hrtf sync_assets)
