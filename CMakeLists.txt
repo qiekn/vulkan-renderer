@@ -33,11 +33,11 @@ set(TINYGLTF_DIR ${CMAKE_SOURCE_DIR}/deps/tinygltf)
 add_library(tinygltf STATIC ${TINYGLTF_DIR}/tiny_gltf.cc)
 target_include_directories(tinygltf PUBLIC ${TINYGLTF_DIR})
 
-# miniaudio — single-header audio lib. Upstream already provides a miniaudio.c
-# that defines MINIAUDIO_IMPLEMENTATION before including the header, so we just
-# compile that one TU into a static lib.
+# miniaudio — single-header audio lib. We compile our own one-line impl TU
+# (src/miniaudio_impl.c) instead of upstream's miniaudio.c so we can include
+# stb_vorbis in the same TU and get OGG decoding for free.
 set(MINIAUDIO_DIR ${CMAKE_SOURCE_DIR}/deps/miniaudio)
-add_library(miniaudio STATIC ${MINIAUDIO_DIR}/miniaudio.c)
+add_library(miniaudio STATIC ${CMAKE_SOURCE_DIR}/src/miniaudio_impl.c)
 target_include_directories(miniaudio PUBLIC ${MINIAUDIO_DIR})
 
 # Dear ImGui (docking branch) — upstream ships no CMakeLists, so we build it ourselves.
