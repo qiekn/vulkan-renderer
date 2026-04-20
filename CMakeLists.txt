@@ -25,6 +25,14 @@ find_package(Vulkan REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/deps/glfw)
 add_subdirectory(${CMAKE_SOURCE_DIR}/deps/glm)
 
+# tinygltf — single-header glTF parser; upstream ships a tiny_gltf.cc that pulls
+# in the IMPLEMENTATION defines (tinygltf + stb_image + stb_image_write). We
+# build just that one .cc into a static lib so the heavy header expansions happen
+# exactly once.
+set(TINYGLTF_DIR ${CMAKE_SOURCE_DIR}/deps/tinygltf)
+add_library(tinygltf STATIC ${TINYGLTF_DIR}/tiny_gltf.cc)
+target_include_directories(tinygltf PUBLIC ${TINYGLTF_DIR})
+
 # Dear ImGui (docking branch) — upstream ships no CMakeLists, so we build it ourselves.
 set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/deps/imgui)
 add_library(imgui STATIC
@@ -111,6 +119,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   glfw
   glm
   imgui
+  tinygltf
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE

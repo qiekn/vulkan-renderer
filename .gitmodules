@@ -8,3 +8,6 @@
 	path = deps/imgui
 	url = https://github.com/ocornut/imgui.git
 	branch = docking
+[submodule "deps/tinygltf"]
+	path = deps/tinygltf
+	url = https://github.com/syoyo/tinygltf
