@@ -5,7 +5,6 @@
 // missing, and the flag tells the shader whether to actually use the result.
 
 struct UniformBufferObject {
-    float4x4 model;
     float4x4 view;
     float4x4 proj;
     float4   light_positions[4];  // xyz = world-space position, w unused
@@ -33,7 +32,15 @@ struct Material {
     float  _pad0;
 };
 
-[[vk::push_constant]] Material material;
+// One 128-byte push constant block: vertex stage uses `model`, fragment stage
+// uses `material`. Vulkan's minimum push constant guarantee is 128 bytes, so
+// this fits everywhere without reaching for larger ranges.
+struct DrawPushConstants {
+    float4x4 model;
+    Material material;
+};
+
+[[vk::push_constant]] DrawPushConstants draw;
 
 // Per-material set: five combined image-samplers in a fixed order. Bind every
 // slot on the C++ side, substituting a 1x1 white fallback where the glTF
@@ -62,11 +69,11 @@ struct VertexOutput {
 [shader("vertex")]
 VertexOutput vertMain(VertexInput input) {
     VertexOutput output;
-    float4 world = mul(ubo.model, float4(input.position, 1.0));
+    float4 world = mul(draw.model, float4(input.position, 1.0));
     output.world_pos = world.xyz;
     // Upper-left 3x3 works as a normal matrix while scale stays uniform; once
     // nodes get non-uniform scale we'll want transpose(inverse(model)).
-    float3x3 upper = (float3x3)ubo.model;
+    float3x3 upper = (float3x3)draw.model;
     output.world_normal = normalize(mul(upper, input.normal));
     output.world_tangent = float4(normalize(mul(upper, input.tangent.xyz)), input.tangent.w);
     output.uv = input.uv;
@@ -105,7 +112,7 @@ float3 FresnelSchlick(float cos_theta, float3 f0) {
 // vertex normal unchanged.
 float3 GetNormal(VertexOutput input) {
     float3 n = normalize(input.world_normal);
-    if (material.normal_tex_set < 0) {
+    if (draw.material.normal_tex_set < 0) {
         return n;
     }
     float3 sampled = normal_map.Sample(input.uv).xyz * 2.0 - 1.0;
@@ -118,27 +125,27 @@ float3 GetNormal(VertexOutput input) {
 [shader("fragment")]
 float4 fragMain(VertexOutput input) : SV_Target {
     // Base color: sample + factor when the map is present, factor alone otherwise.
-    float4 base_color = material.base_color_factor;
-    if (material.base_color_tex_set >= 0) {
+    float4 base_color = draw.material.base_color_factor;
+    if (draw.material.base_color_tex_set >= 0) {
         base_color *= base_color_map.Sample(input.uv);
     }
 
     // glTF metallic-roughness convention: B = metallic, G = roughness.
-    float metallic = material.metallic_factor;
-    float roughness = material.roughness_factor;
-    if (material.metallic_roughness_tex_set >= 0) {
+    float metallic = draw.material.metallic_factor;
+    float roughness = draw.material.roughness_factor;
+    if (draw.material.metallic_roughness_tex_set >= 0) {
         float4 mr = metallic_roughness_map.Sample(input.uv);
         metallic *= mr.b;
         roughness *= mr.g;
     }
 
     float ao = 1.0;
-    if (material.occlusion_tex_set >= 0) {
+    if (draw.material.occlusion_tex_set >= 0) {
         ao = occlusion_map.Sample(input.uv).r;
     }
 
-    float3 emissive = material.emissive_factor.rgb;
-    if (material.emissive_tex_set >= 0) {
+    float3 emissive = draw.material.emissive_factor.rgb;
+    if (draw.material.emissive_tex_set >= 0) {
         emissive *= emissive_map.Sample(input.uv).rgb;
     }
 

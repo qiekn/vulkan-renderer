@@ -16,8 +16,10 @@ namespace engine {
 // std140 / std430 layout rules line up 1:1 with the GLM memory layout (column-
 // major, 16-byte-aligned). Keep scalar floats together at the tail and pad them
 // to a multiple of 16 bytes so the struct stride is predictable.
+//
+// `model` lives in DrawPushConstants now (per-node transforms) so the UBO only
+// carries view/projection + lighting state that's constant across a frame.
 export struct UniformBufferObject {
-  glm::mat4 model;
   glm::mat4 view;
   glm::mat4 proj;
   glm::vec4 light_positions[4];
@@ -44,6 +46,14 @@ export struct MaterialPushConstants {
   int occlusion_tex_set;
   int emissive_tex_set;
   float _pad0 = 0.0f;
+};
+
+// Full per-draw push constant payload. 128 bytes — the minimum guaranteed push
+// constant size in Vulkan, so every target device fits this. Vertex stage reads
+// `model`; fragment stage reads the material block.
+export struct DrawPushConstants {
+  glm::mat4 model;
+  MaterialPushConstants material;
 };
 
 // ---------------------------------------------------------------------------: UniformBufferSet

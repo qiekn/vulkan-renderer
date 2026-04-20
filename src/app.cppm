@@ -4,6 +4,7 @@ module;
 #include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <imgui.h>
@@ -16,7 +17,9 @@ import engine.event;
 import engine.window;
 import engine.device;
 import engine.swapchain;
-import engine.mesh;
+import engine.model;
+import engine.model_loader;
+import engine.material_bindings;
 import engine.pipeline;
 import engine.renderer;
 import engine.scene;
@@ -37,6 +40,7 @@ constexpr std::uint32_t kWindowHeight = 720;
 constexpr std::string_view kWindowTitle = "Vulkan Engine";
 constexpr std::string_view kPbrShaderId = "pbr";
 constexpr std::string_view kPbrShaderPath = "assets/shaders/slang.spv";
+constexpr std::string_view kDefaultModelPath = "assets/models/damaged_helmet/DamagedHelmet.glb";
 
 // ---------------------------------------------------------------------------: Listener
 
@@ -103,43 +107,45 @@ public:
       throw std::runtime_error("Failed to load pbr shader");
     }
 
-    engine::UniformBufferSet ubo_set(device, engine::Renderer::kMaxFramesInFlight);
-    engine::Mesh cube = engine::Mesh::CreateCube(device, 1.0f);
+    // Load the glTF scene first — the pipeline's descriptor set layout for
+    // set=1 comes from MaterialBindings, which needs the Model to know how
+    // many materials to allocate descriptor sets for.
+    engine::Model model = engine::LoadGltfModel(device, std::filesystem::path(kDefaultModelPath));
+    std::cout << "[model] loaded " << kDefaultModelPath
+              << " nodes=" << model.nodes.size()
+              << " materials=" << model.materials.size()
+              << " textures=" << model.textures.size()
+              << " animations=" << model.animations.size() << '\n';
+    engine::MaterialBindings material_bindings(device, model);
 
-    auto vertex_attributes = engine::Mesh::GetAttributeDescriptions();
-    vk::PushConstantRange material_range{
+    engine::UniformBufferSet ubo_set(device, engine::Renderer::kMaxFramesInFlight);
+
+    auto vertex_attributes = engine::ModelVertex::GetAttributeDescriptions();
+    vk::PushConstantRange draw_range{
         .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
         .offset = 0,
-        .size = sizeof(engine::MaterialPushConstants),
+        .size = sizeof(engine::DrawPushConstants),
+    };
+    std::array descriptor_layouts = {
+        *ubo_set.GetLayout(),
+        *material_bindings.GetLayout(),
     };
     engine::PipelineConfig pipeline_config{
         .shader_module = *pbr_shader->GetModule(),
         .color_format = swapchain.GetImageFormat(),
         .depth_format = swapchain.GetDepthFormat(),
-        .vertex_binding = engine::Mesh::GetBindingDescription(),
+        .vertex_binding = engine::ModelVertex::GetBindingDescription(),
         .vertex_attributes = std::span(vertex_attributes),
-        .descriptor_set_layout = *ubo_set.GetLayout(),
-        .push_constant_ranges = std::span(&material_range, 1),
+        .descriptor_set_layouts = std::span(descriptor_layouts),
+        .push_constant_ranges = std::span(&draw_range, 1),
         .cull_mode = vk::CullModeFlagBits::eBack,
         .front_face = vk::FrontFace::eCounterClockwise,
     };
     engine::Pipeline pipeline(device, pipeline_config);
 
-    engine::MaterialPushConstants material{
-        .base_color_factor = glm::vec4(0.9f, 0.1f, 0.05f, 1.0f),
-        .emissive_factor = glm::vec4(0.0f),
-        .metallic_factor = 0.1f,
-        .roughness_factor = 0.35f,
-        .base_color_tex_set = -1,
-        .metallic_roughness_tex_set = -1,
-        .normal_tex_set = -1,
-        .occlusion_tex_set = -1,
-        .emissive_tex_set = -1,
-    };
-
     engine::RenderPassManager pass_manager;
     auto* forward_pass =
-        pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set, cube, material);
+        pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set, model, material_bindings);
     pass_manager.AddPass<engine::ImGuiPass>();
 
     // ImGuiLayer builds its graphics pipeline against the swapchain color
@@ -150,13 +156,13 @@ public:
 
     engine::Scene scene;
 
-    engine::Entity* cube_entity = scene.CreateEntity("Cube");
-    auto* cube_transform = cube_entity->AddComponent<engine::TransformComponent>();
+    engine::Entity* model_entity = scene.CreateEntity("Model");
+    auto* model_transform = model_entity->AddComponent<engine::TransformComponent>();
 
     engine::Entity* camera_entity = scene.CreateEntity("Camera");
     auto* camera_transform = camera_entity->AddComponent<engine::TransformComponent>();
     auto* camera = camera_entity->AddComponent<engine::CameraComponent>();
-    camera_transform->SetPosition(glm::vec3(0.0f, 1.2f, 3.5f));
+    camera_transform->SetPosition(glm::vec3(0.0f, 0.0f, 3.5f));
     auto extent = swapchain.GetExtent();
     camera->SetAspect(static_cast<float>(extent.width) / static_cast<float>(extent.height));
 
@@ -169,7 +175,7 @@ public:
 
     window.SetCursorDisabled(true);
 
-    // Four point lights in a loose ring around the cube so every face picks up
+    // Four point lights in a loose ring around the model so every face picks up
     // at least one direct light. Radiant intensity is in "watts per steradian"
     // units — attenuation falls off with 1/r^2, so push the values up.
     const std::array<glm::vec4, 4> light_positions = {
@@ -188,6 +194,11 @@ public:
     float exposure = 1.0f;
     float gamma = 2.2f;
     bool show_demo = false;
+    bool animate_rotation = true;
+
+    // Single default instance at the origin. Phase 6 will expand this into a
+    // list so we can draw several copies of the same model.
+    std::array<glm::mat4, 1> instances{glm::mat4(1.0f)};
 
     auto last_time = std::chrono::steady_clock::now();
     while (!window.ShouldClose()) {
@@ -201,18 +212,20 @@ public:
         controller.Update(delta);
       }
 
-      glm::quat rot = cube_transform->GetRotation();
-      rot = glm::angleAxis(delta * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
-      cube_transform->SetRotation(rot);
+      if (animate_rotation) {
+        glm::quat rot = model_transform->GetRotation();
+        rot = glm::angleAxis(delta * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
+        model_transform->SetRotation(rot);
+      }
 
       scene.Update(delta);
 
       imgui_layer.BeginFrame();
       if (ui_mode) {
-        ImGui::Begin("Material");
-        ImGui::ColorEdit3("Base Color", &material.base_color_factor.x);
-        ImGui::SliderFloat("Metallic", &material.metallic_factor, 0.0f, 1.0f);
-        ImGui::SliderFloat("Roughness", &material.roughness_factor, 0.04f, 1.0f);
+        ImGui::Begin("Model");
+        ImGui::Checkbox("Auto-rotate", &animate_rotation);
+        ImGui::Text("Nodes: %zu, Materials: %zu, Textures: %zu",
+                    model.nodes.size(), model.materials.size(), model.textures.size());
         ImGui::End();
 
         ImGui::Begin("Camera");
@@ -247,11 +260,11 @@ public:
       }
       imgui_layer.EndFrame();
 
-      forward_pass->SetMaterial(material);
+      instances[0] = model_transform->GetMatrix();
+      forward_pass->SetInstances(std::span(instances));
 
       glm::vec3 cam_pos = camera_transform->GetPosition();
       engine::UniformBufferObject ubo{
-          .model = cube_transform->GetMatrix(),
           .view = camera->GetViewMatrix(),
           .proj = camera->GetProjectionMatrix(),
           .cam_pos = glm::vec4(cam_pos, 1.0f),

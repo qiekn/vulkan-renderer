@@ -20,7 +20,9 @@ export struct PipelineConfig {
   vk::VertexInputBindingDescription vertex_binding{};
   std::span<const vk::VertexInputAttributeDescription> vertex_attributes{};
 
-  vk::DescriptorSetLayout descriptor_set_layout = nullptr;
+  // Set layouts bound in order (set=0, set=1, ...). An empty span produces a
+  // pipeline layout with no descriptor sets at all.
+  std::span<const vk::DescriptorSetLayout> descriptor_set_layouts{};
   std::span<const vk::PushConstantRange> push_constant_ranges{};
 
   vk::CullModeFlags cull_mode = vk::CullModeFlagBits::eBack;
@@ -133,9 +135,9 @@ Pipeline::Pipeline(Device& device, const PipelineConfig& config) : device_(devic
   };
 
   vk::PipelineLayoutCreateInfo layout_info{};
-  if (config.descriptor_set_layout) {
-    layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &config.descriptor_set_layout;
+  if (!config.descriptor_set_layouts.empty()) {
+    layout_info.setLayoutCount = static_cast<std::uint32_t>(config.descriptor_set_layouts.size());
+    layout_info.pSetLayouts = config.descriptor_set_layouts.data();
   }
   if (!config.push_constant_ranges.empty()) {
     layout_info.pushConstantRangeCount =
