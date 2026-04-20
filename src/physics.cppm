@@ -301,6 +301,13 @@ export class PhysicsSystem {
       }
 
       float e = std::min(a.restitution_, b.restitution_);
+      // Resting-contact guard: gravity injects ~|g|·dt of approach speed each
+      // step (≈0.163 m/s at 60 Hz). Without zeroing restitution at low speeds,
+      // that speed gets bounced back up and the body vibrates on the ground.
+      constexpr float kRestSpeedThreshold = 1.0f;
+      if (-vel_along_normal < kRestSpeedThreshold) {
+        e = 0.0f;
+      }
       float j = -(1.0f + e) * vel_along_normal / inv_sum;
       glm::vec3 impulse = c.normal * j;
       if (!a.is_kinematic_) {
@@ -410,7 +417,11 @@ export class PhysicsSystem {
 
     if (dist_sq > 1e-6f) {
       float dist = std::sqrt(dist_sq);
-      out.normal = diff / dist;
+      // `diff` points box → sphere; CollisionInfo contract wants A→B
+      // (sphere → box here), so negate. SphereVsSphere already uses A→B via
+      // `pb - pa`; without this flip SphereVsAabb is inconsistent and the
+      // approach-test in ResolveCollisions fires on the wrong side.
+      out.normal = -diff / dist;
       out.penetration_depth = radius - dist;
       out.contact_point = bp + clamped;
     } else {
@@ -420,7 +431,8 @@ export class PhysicsSystem {
       if (face_dist.y < face_dist[axis]) axis = 1;
       if (face_dist.z < face_dist[axis]) axis = 2;
       glm::vec3 n(0.0f);
-      n[axis] = local[axis] >= 0.0f ? 1.0f : -1.0f;
+      // A→B: from sphere center toward box center along the chosen axis.
+      n[axis] = local[axis] >= 0.0f ? -1.0f : 1.0f;
       out.normal = n;
       out.penetration_depth = radius + face_dist[axis];
       out.contact_point = sp;
