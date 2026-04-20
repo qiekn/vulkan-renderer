@@ -156,9 +156,6 @@ public:
 
     engine::Scene scene;
 
-    engine::Entity* model_entity = scene.CreateEntity("Model");
-    auto* model_transform = model_entity->AddComponent<engine::TransformComponent>();
-
     engine::Entity* camera_entity = scene.CreateEntity("Camera");
     auto* camera_transform = camera_entity->AddComponent<engine::TransformComponent>();
     auto* camera = camera_entity->AddComponent<engine::CameraComponent>();
@@ -196,9 +193,31 @@ public:
     bool show_demo = false;
     bool animate_rotation = true;
 
-    // Single default instance at the origin. Phase 6 will expand this into a
-    // list so we can draw several copies of the same model.
-    std::array<glm::mat4, 1> instances{glm::mat4(1.0f)};
+    // Flat list of object instances — tutorial-style layout. Each entry becomes
+    // one world-space model matrix per frame; ForwardPass walks the scene graph
+    // once per matrix. `animation_angle` is shared so every helmet rotates in
+    // lockstep; swap to per-instance phases if you want a livelier scene.
+    struct InstanceTransform {
+      glm::vec3 position;
+      glm::vec3 rotation_euler_deg;
+      glm::vec3 scale;
+    };
+    const std::array<InstanceTransform, 10> kInstanceTransforms = {{
+        {glm::vec3( 0.0f,  0.0f,  0.0f), glm::vec3(  0.0f,   0.0f, 0.0f), glm::vec3(1.0f)},
+        {glm::vec3(-2.5f,  0.0f, -1.0f), glm::vec3(  0.0f,  45.0f, 0.0f), glm::vec3(0.8f)},
+        {glm::vec3( 2.5f,  0.0f, -1.0f), glm::vec3(  0.0f, -45.0f, 0.0f), glm::vec3(0.8f)},
+        {glm::vec3(-2.0f,  0.0f, -3.5f), glm::vec3(  0.0f,  30.0f, 0.0f), glm::vec3(0.7f)},
+        {glm::vec3( 2.0f,  0.0f, -3.5f), glm::vec3(  0.0f, -30.0f, 0.0f), glm::vec3(0.7f)},
+        {glm::vec3(-2.0f,  0.0f,  2.0f), glm::vec3(  0.0f, -30.0f, 0.0f), glm::vec3(0.6f)},
+        {glm::vec3( 2.0f,  0.0f,  2.0f), glm::vec3(  0.0f,  30.0f, 0.0f), glm::vec3(0.6f)},
+        {glm::vec3( 0.0f,  2.5f, -2.5f), glm::vec3( 45.0f,   0.0f, 0.0f), glm::vec3(0.5f)},
+        {glm::vec3( 0.0f, -1.5f, -2.5f), glm::vec3(-30.0f,   0.0f, 0.0f), glm::vec3(0.5f)},
+        {glm::vec3( 0.0f,  0.5f, -5.5f), glm::vec3(  0.0f, 180.0f, 0.0f), glm::vec3(1.2f)},
+    }};
+    int visible_instance_count = static_cast<int>(kInstanceTransforms.size());
+    float animation_angle = 0.0f;
+    std::vector<glm::mat4> instance_matrices;
+    instance_matrices.reserve(kInstanceTransforms.size());
 
     auto last_time = std::chrono::steady_clock::now();
     while (!window.ShouldClose()) {
@@ -213,9 +232,7 @@ public:
       }
 
       if (animate_rotation) {
-        glm::quat rot = model_transform->GetRotation();
-        rot = glm::angleAxis(delta * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
-        model_transform->SetRotation(rot);
+        animation_angle += delta * 0.5f;
       }
 
       scene.Update(delta);
@@ -224,6 +241,8 @@ public:
       if (ui_mode) {
         ImGui::Begin("Model");
         ImGui::Checkbox("Auto-rotate", &animate_rotation);
+        ImGui::SliderInt("Instances", &visible_instance_count, 1,
+                         static_cast<int>(kInstanceTransforms.size()));
         ImGui::Text("Nodes: %zu, Materials: %zu, Textures: %zu",
                     model.nodes.size(), model.materials.size(), model.textures.size());
         ImGui::End();
@@ -260,8 +279,21 @@ public:
       }
       imgui_layer.EndFrame();
 
-      instances[0] = model_transform->GetMatrix();
-      forward_pass->SetInstances(std::span(instances));
+      instance_matrices.clear();
+      const int count = std::min<int>(visible_instance_count,
+                                      static_cast<int>(kInstanceTransforms.size()));
+      for (int i = 0; i < count; ++i) {
+        const auto& t = kInstanceTransforms[i];
+        glm::mat4 m(1.0f);
+        m = glm::translate(m, t.position);
+        m = glm::rotate(m, animation_angle, glm::vec3(0.0f, 1.0f, 0.0f));
+        m = glm::rotate(m, glm::radians(t.rotation_euler_deg.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        m = glm::rotate(m, glm::radians(t.rotation_euler_deg.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        m = glm::rotate(m, glm::radians(t.rotation_euler_deg.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        m = glm::scale(m, t.scale);
+        instance_matrices.push_back(m);
+      }
+      forward_pass->SetInstances(std::span(instance_matrices));
 
       glm::vec3 cam_pos = camera_transform->GetPosition();
       engine::UniformBufferObject ubo{
