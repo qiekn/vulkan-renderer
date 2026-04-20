@@ -31,6 +31,7 @@ import engine.camera_controller;
 import engine.imgui_layer;
 import engine.imgui_pass;
 import engine.audio;
+import engine.physics;
 
 namespace app {
 
@@ -115,6 +116,11 @@ public:
     // reference device_) and before audio (ClearHrtfSources on teardown).
     engine::HrtfProcessor hrtf_processor(device);
     auto hrtf_clip = engine::HrtfClip::LoadFromFile(std::filesystem::path(kPingClipPath));
+
+    // Physics: pure CPU rigid-body system. Must live before scene so that
+    // RigidBodyComponents die (drop their body*) before the PhysicsSystem
+    // destroys the backing RigidBody objects.
+    engine::PhysicsSystem physics;
 
     engine::Swapchain swapchain(window, device);
 
@@ -259,6 +265,64 @@ public:
     std::vector<glm::mat4> instance_matrices;
     instance_matrices.reserve(kInstanceTransforms.size());
 
+    // Each instance gets its authored position/rotation as the RigidBody
+    // initial pose — Reset() replays these to un-bake any physics state.
+    auto euler_to_quat = [](const glm::vec3& euler_deg) {
+      return glm::quat(glm::radians(euler_deg));
+    };
+
+    // One physics body per helmet. Radius chosen to roughly match the visible
+    // helmet bounding volume at scale 1.0; smaller instances will look like
+    // slightly oversized colliders — acceptable for a demo, not production.
+    constexpr float kHelmetRadius = 0.9f;
+
+    std::vector<engine::Entity*> helmet_entities;
+    std::vector<engine::RigidBody*> helmet_bodies;
+    helmet_entities.reserve(kInstanceTransforms.size());
+    helmet_bodies.reserve(kInstanceTransforms.size());
+    for (std::size_t i = 0; i < kInstanceTransforms.size(); ++i) {
+      const auto& t = kInstanceTransforms[i];
+      engine::Entity* e = scene.CreateEntity("Helmet" + std::to_string(i));
+      auto* tr = e->AddComponent<engine::TransformComponent>();
+      tr->SetPosition(t.position);
+      tr->SetRotation(euler_to_quat(t.rotation_euler_deg));
+      tr->SetScale(t.scale);
+
+      engine::RigidBody* body = physics.CreateRigidBody();
+      body->SetCollider(std::make_unique<engine::SphereCollider>(kHelmetRadius));
+      body->SetMass(1.0f);
+      body->SetRestitution(0.35f);
+      body->SetPosition(t.position);
+      body->SetRotation(euler_to_quat(t.rotation_euler_deg));
+      e->AddComponent<engine::RigidBodyComponent>(body);
+
+      helmet_entities.push_back(e);
+      helmet_bodies.push_back(body);
+    }
+
+    // Kinematic ground plane. No entity — it doesn't render and doesn't need
+    // to participate in scene graph traversal.
+    constexpr float kGroundY = -3.0f;
+    engine::RigidBody* ground = physics.CreateRigidBody();
+    ground->SetCollider(std::make_unique<engine::BoxCollider>(glm::vec3(25.0f, 1.0f, 25.0f)));
+    ground->SetKinematic(true);
+    ground->SetRestitution(0.3f);
+    ground->SetPosition(glm::vec3(0.0f, kGroundY, 0.0f));
+
+    bool physics_enabled = false;
+    float gravity_y = -9.81f;
+
+    auto reset_bodies = [&]() {
+      for (std::size_t i = 0; i < helmet_bodies.size(); ++i) {
+        const auto& t = kInstanceTransforms[i];
+        engine::RigidBody* b = helmet_bodies[i];
+        b->SetPosition(t.position);
+        b->SetRotation(euler_to_quat(t.rotation_euler_deg));
+        b->SetLinearVelocity(glm::vec3(0.0f));
+        b->SetAngularVelocity(glm::vec3(0.0f));
+      }
+    };
+
     auto last_time = std::chrono::steady_clock::now();
     while (!window.ShouldClose()) {
       window.PollEvents();
@@ -280,6 +344,14 @@ public:
         const std::uint32_t clamped =
             std::min<std::uint32_t>(static_cast<std::uint32_t>(active_animation), anim_count - 1);
         model.UpdateAnimation(clamped, delta);
+      }
+
+      if (physics_enabled) {
+        physics.Update(delta);
+      } else {
+        // Pin bodies to authored positions so toggling the checkbox is
+        // idempotent — users can hit enable/disable without a separate reset.
+        reset_bodies();
       }
 
       scene.Update(delta);
@@ -376,6 +448,18 @@ public:
         }
         ImGui::End();
 
+        ImGui::Begin("Physics");
+        ImGui::Checkbox("Enable physics", &physics_enabled);
+        if (ImGui::SliderFloat("Gravity Y", &gravity_y, -20.0f, 5.0f)) {
+          physics.SetGravity(glm::vec3(0.0f, gravity_y, 0.0f));
+        }
+        if (ImGui::Button("Reset")) {
+          reset_bodies();
+        }
+        ImGui::Text("Bodies: %zu (10 helmets + 1 ground)", physics.GetBodyCount());
+        ImGui::TextDisabled("Ground plane is invisible, at y = %.1f", kGroundY);
+        ImGui::End();
+
         if (show_demo) {
           ImGui::ShowDemoWindow(&show_demo);
         }
@@ -384,16 +468,18 @@ public:
 
       instance_matrices.clear();
       const int count = std::min<int>(visible_instance_count,
-                                      static_cast<int>(kInstanceTransforms.size()));
+                                      static_cast<int>(helmet_entities.size()));
       for (int i = 0; i < count; ++i) {
-        const auto& t = kInstanceTransforms[i];
-        glm::mat4 m(1.0f);
-        m = glm::translate(m, t.position);
-        m = glm::rotate(m, animation_angle, glm::vec3(0.0f, 1.0f, 0.0f));
-        m = glm::rotate(m, glm::radians(t.rotation_euler_deg.x), glm::vec3(1.0f, 0.0f, 0.0f));
-        m = glm::rotate(m, glm::radians(t.rotation_euler_deg.y), glm::vec3(0.0f, 1.0f, 0.0f));
-        m = glm::rotate(m, glm::radians(t.rotation_euler_deg.z), glm::vec3(0.0f, 0.0f, 1.0f));
-        m = glm::scale(m, t.scale);
+        auto* tr = helmet_entities[i]->GetComponent<engine::TransformComponent>();
+        // Rebuild TRS locally so we can splice in the optional y-spin overlay
+        // between the position and body rotation. The spin is a pure visual
+        // effect — it doesn't feed back into the RigidBody's angular state.
+        glm::mat4 m = glm::translate(glm::mat4(1.0f), tr->GetPosition());
+        if (animate_rotation) {
+          m = glm::rotate(m, animation_angle, glm::vec3(0.0f, 1.0f, 0.0f));
+        }
+        m *= glm::mat4_cast(tr->GetRotation());
+        m *= glm::scale(glm::mat4(1.0f), tr->GetScale());
         instance_matrices.push_back(m);
       }
       forward_pass->SetInstances(std::span(instance_matrices));
