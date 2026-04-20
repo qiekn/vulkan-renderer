@@ -110,6 +110,12 @@ public:
     audio.LoadClip(std::string(kAmbientClipId), std::filesystem::path(kAmbientClipPath));
     audio.LoadClip(std::string(kPingClipId), std::filesystem::path(kPingClipPath));
 
+    // HRTF: first compute pipeline in the engine. Lives between audio and
+    // scene in the stack so it's destroyed before device (its vk::raii members
+    // reference device_) and before audio (ClearHrtfSources on teardown).
+    engine::HrtfProcessor hrtf_processor(device);
+    auto hrtf_clip = engine::HrtfClip::LoadFromFile(std::filesystem::path(kPingClipPath));
+
     engine::Swapchain swapchain(window, device);
 
     engine::ResourceManager resources;
@@ -209,6 +215,11 @@ public:
     int active_animation = 0;
     float master_volume = 0.5f;
     audio.SetMasterVolume(master_volume);
+
+    float hrtf_azimuth_deg = 0.0f;
+    float hrtf_elevation_deg = 0.0f;
+    float last_bake_ms = 0.0f;
+    std::size_t last_bake_frames = 0;
 
     // Ambient loop source — parked at origin so spatial attenuation varies as
     // the camera moves around the scene. If the clip wasn't found (missing
@@ -333,6 +344,36 @@ public:
         glm::vec3 listener_pos = camera_transform->GetPosition();
         ImGui::Text("Listener: (%.2f, %.2f, %.2f)",
                     listener_pos.x, listener_pos.y, listener_pos.z);
+        ImGui::End();
+
+        ImGui::Begin("HRTF");
+        if (!hrtf_clip) {
+          ImGui::TextDisabled("ping clip not decoded — bake disabled");
+        } else {
+          ImGui::SliderFloat("Azimuth (deg)", &hrtf_azimuth_deg, -180.0f, 180.0f);
+          ImGui::SliderFloat("Elevation (deg)", &hrtf_elevation_deg, -45.0f, 45.0f);
+          if (ImGui::Button("Bake & Play")) {
+            auto ir = engine::BuildHrtfIr(glm::radians(hrtf_azimuth_deg),
+                                          glm::radians(hrtf_elevation_deg));
+            auto start = std::chrono::steady_clock::now();
+            auto pcm = hrtf_processor.Bake(hrtf_clip->GetMono(), ir);
+            auto end = std::chrono::steady_clock::now();
+            last_bake_ms = std::chrono::duration<float, std::milli>(end - start).count();
+            last_bake_frames = pcm.size() / 2;
+
+            audio.ClearHrtfSources();
+            auto src = std::make_unique<engine::HrtfSource>(
+                audio.GetEngine(), std::move(pcm), hrtf_clip->GetSampleRate());
+            src->Play();
+            audio.AdoptHrtfSource(std::move(src));
+          }
+          ImGui::Text("Clip: %zu mono frames @ %u Hz",
+                      hrtf_clip->GetMono().size(), hrtf_clip->GetSampleRate());
+          if (last_bake_frames > 0) {
+            ImGui::Text("Last bake: %.2f ms (%zu stereo frames)",
+                        last_bake_ms, last_bake_frames);
+          }
+        }
         ImGui::End();
 
         if (show_demo) {
