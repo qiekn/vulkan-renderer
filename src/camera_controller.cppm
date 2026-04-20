@@ -35,6 +35,9 @@ public:
     first_mouse_ = true;
   }
 
+  float GetMovementSpeed() const { return movement_speed_; }
+  float GetMouseSensitivity() const { return mouse_sensitivity_; }
+
   void Update(float delta_time) {
     glm::quat rotation = transform_.GetRotation();
     glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, -1.0f);

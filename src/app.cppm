@@ -6,6 +6,8 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <imgui.h>
+
 export module app;
 
 import vulkan;
@@ -23,6 +25,8 @@ import engine.render_pass;
 import engine.forward_pass;
 import engine.uniform;
 import engine.camera_controller;
+import engine.imgui_layer;
+import engine.imgui_pass;
 
 namespace app {
 
@@ -36,11 +40,13 @@ constexpr std::string_view kPbrShaderPath = "assets/shaders/slang.spv";
 
 // ---------------------------------------------------------------------------: Listener
 
-// Esc closes, C dumps camera matrices, resize updates aspect.
+// Esc closes, C dumps camera matrices, F1 toggles UI mode (cursor released +
+// camera input paused so ImGui owns the pointer), resize updates aspect.
 class AppListener : public engine::EventListener {
 public:
-  AppListener(engine::Window& window, engine::CameraComponent& camera)
-      : window_(window), camera_(camera) {}
+  AppListener(engine::Window& window, engine::CameraComponent& camera,
+              engine::CameraController& controller, bool& ui_mode)
+      : window_(window), camera_(camera), controller_(controller), ui_mode_(ui_mode) {}
 
   void OnEvent(engine::Event& event) override {
     engine::EventDispatcher dispatcher(event);
@@ -48,6 +54,12 @@ public:
     dispatcher.Dispatch<engine::KeyPressEvent>([this](engine::KeyPressEvent& e) {
       if (e.GetKeyCode() == GLFW_KEY_ESCAPE) {
         window_.RequestClose();
+        return true;
+      }
+      if (e.GetKeyCode() == GLFW_KEY_F1 && !e.IsRepeat()) {
+        ui_mode_ = !ui_mode_;
+        window_.SetCursorDisabled(!ui_mode_);
+        controller_.SetMouseCaptured(!ui_mode_);
         return true;
       }
       if (e.GetKeyCode() == GLFW_KEY_C && !e.IsRepeat()) {
@@ -70,6 +82,8 @@ public:
 private:
   engine::Window& window_;
   engine::CameraComponent& camera_;
+  engine::CameraController& controller_;
+  bool& ui_mode_;
 };
 
 // ---------------------------------------------------------------------------: Application
@@ -118,7 +132,13 @@ public:
     };
 
     engine::RenderPassManager pass_manager;
-    pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set, cube, material);
+    auto* forward_pass =
+        pass_manager.AddPass<engine::ForwardPass>(pipeline, ubo_set, cube, material);
+    pass_manager.AddPass<engine::ImGuiPass>();
+
+    // ImGuiLayer builds its graphics pipeline against the swapchain color
+    // format, so it has to be alive before Renderer records its first frame.
+    engine::ImGuiLayer imgui_layer(window, device, swapchain);
 
     engine::Renderer renderer(window, device, swapchain, pass_manager);
 
@@ -137,7 +157,8 @@ public:
     engine::CameraController controller(*camera_transform, *camera);
     event_bus.AddListener(&controller);
 
-    AppListener listener(window, *camera);
+    bool ui_mode = false;
+    AppListener listener(window, *camera, controller, ui_mode);
     event_bus.AddListener(&listener);
 
     window.SetCursorDisabled(true);
@@ -158,6 +179,10 @@ public:
         glm::vec4(15.0f, 35.0f, 25.0f, 1.0f),  // green rim
     };
 
+    float exposure = 1.0f;
+    float gamma = 2.2f;
+    bool show_demo = false;
+
     auto last_time = std::chrono::steady_clock::now();
     while (!window.ShouldClose()) {
       window.PollEvents();
@@ -166,7 +191,9 @@ public:
       float delta = std::chrono::duration<float>(now - last_time).count();
       last_time = now;
 
-      controller.Update(delta);
+      if (!ui_mode) {
+        controller.Update(delta);
+      }
 
       glm::quat rot = cube_transform->GetRotation();
       rot = glm::angleAxis(delta * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f)) * rot;
@@ -174,14 +201,56 @@ public:
 
       scene.Update(delta);
 
+      imgui_layer.BeginFrame();
+      if (ui_mode) {
+        ImGui::Begin("Material");
+        ImGui::ColorEdit3("Base Color", &material.base_color.x);
+        ImGui::SliderFloat("Metallic", &material.metallic, 0.0f, 1.0f);
+        ImGui::SliderFloat("Roughness", &material.roughness, 0.04f, 1.0f);
+        ImGui::End();
+
+        ImGui::Begin("Camera");
+        float speed = controller.GetMovementSpeed();
+        if (ImGui::SliderFloat("Move speed", &speed, 0.5f, 20.0f)) {
+          controller.SetMovementSpeed(speed);
+        }
+        float sens = controller.GetMouseSensitivity();
+        if (ImGui::SliderFloat("Mouse sensitivity", &sens, 0.01f, 0.5f)) {
+          controller.SetMouseSensitivity(sens);
+        }
+        float fov_deg = glm::degrees(camera->GetFov());
+        if (ImGui::SliderFloat("FOV (deg)", &fov_deg, 30.0f, 110.0f)) {
+          camera->SetFov(glm::radians(fov_deg));
+        }
+        glm::vec3 cam_pos_view = camera_transform->GetPosition();
+        ImGui::Text("Position: (%.2f, %.2f, %.2f)",
+                    cam_pos_view.x, cam_pos_view.y, cam_pos_view.z);
+        ImGui::End();
+
+        ImGui::Begin("Render");
+        ImGui::SliderFloat("Exposure", &exposure, 0.1f, 5.0f);
+        ImGui::SliderFloat("Gamma", &gamma, 1.0f, 3.0f);
+        ImGui::Text("%.1f FPS (%.2f ms)", ImGui::GetIO().Framerate,
+                    1000.0f / ImGui::GetIO().Framerate);
+        ImGui::Checkbox("Show ImGui demo", &show_demo);
+        ImGui::End();
+
+        if (show_demo) {
+          ImGui::ShowDemoWindow(&show_demo);
+        }
+      }
+      imgui_layer.EndFrame();
+
+      forward_pass->SetMaterial(material);
+
       glm::vec3 cam_pos = camera_transform->GetPosition();
       engine::UniformBufferObject ubo{
           .model = cube_transform->GetMatrix(),
           .view = camera->GetViewMatrix(),
           .proj = camera->GetProjectionMatrix(),
           .cam_pos = glm::vec4(cam_pos, 1.0f),
-          .exposure = 1.0f,
-          .gamma = 2.2f,
+          .exposure = exposure,
+          .gamma = gamma,
       };
       std::ranges::copy(light_positions, std::begin(ubo.light_positions));
       std::ranges::copy(light_colors, std::begin(ubo.light_colors));

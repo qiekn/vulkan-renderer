@@ -25,6 +25,20 @@ find_package(Vulkan REQUIRED)
 add_subdirectory(${CMAKE_SOURCE_DIR}/deps/glfw)
 add_subdirectory(${CMAKE_SOURCE_DIR}/deps/glm)
 
+# Dear ImGui (docking branch) — upstream ships no CMakeLists, so we build it ourselves.
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/deps/imgui)
+add_library(imgui STATIC
+  ${IMGUI_DIR}/imgui.cpp
+  ${IMGUI_DIR}/imgui_demo.cpp
+  ${IMGUI_DIR}/imgui_draw.cpp
+  ${IMGUI_DIR}/imgui_tables.cpp
+  ${IMGUI_DIR}/imgui_widgets.cpp
+  ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+  ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+)
+target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+
 # -----------------------------------------------------------------------------: Vulkan C++ Module
 add_library(VulkanCppModule)
 add_library(Vulkan::cppm ALIAS VulkanCppModule)
@@ -96,6 +110,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   Vulkan::cppm
   glfw
   glm
+  imgui
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE

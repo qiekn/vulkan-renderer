@@ -35,6 +35,8 @@ public:
   std::vector<const char*> GetRequiredInstanceExtensions() const;
   vk::raii::SurfaceKHR CreateSurface(const vk::raii::Instance& instance) const;
 
+  GLFWwindow* GetGlfwHandle() const { return window_; }
+
   bool WasResized() const { return resized_; }
   void ClearResized() { resized_ = false; }
 
