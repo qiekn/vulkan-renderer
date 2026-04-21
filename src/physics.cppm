@@ -7,6 +7,8 @@ module;
 export module engine.physics;
 
 import std;
+import vulkan;
+import engine.device;
 import engine.scene;
 
 namespace engine {
@@ -179,6 +181,303 @@ export struct CollisionInfo {
   float penetration_depth = 0.0f;
 };
 
+// ---------------------------------------------------------------------------: GpuPhysicsData
+
+// Flat std430-compatible body state for the compute shader. Layout must match
+// `struct PhysicsData` in assets/shaders/physics.slang — 128 bytes per body,
+// eight vec4 slots. Scalars ride in the w channels so the struct stays
+// fully vec4-aligned:
+//   position.w          = inverse mass
+//   linear_velocity.w   = restitution
+//   angular_velocity.w  = friction (reserved — unused by stepMain today)
+//   force.w             = is_kinematic flag (0/1)
+//   torque.w            = use_gravity flag (0/1)
+//   collider.w          = collider type sentinel (1 = sphere, 0 = box, -1 = none)
+//   collider.xyz        = sphere radius or box half-extents
+//   collider2.xyz       = collider offset from body origin
+export struct GpuPhysicsData {
+  glm::vec4 position;
+  glm::vec4 rotation;
+  glm::vec4 linear_velocity;
+  glm::vec4 angular_velocity;
+  glm::vec4 force;
+  glm::vec4 torque;
+  glm::vec4 collider;
+  glm::vec4 collider2;
+};
+static_assert(sizeof(GpuPhysicsData) == 128,
+              "GpuPhysicsData must match shader-side std430 layout (8 * vec4)");
+
+// ---------------------------------------------------------------------------: GpuPhysicsProcessor
+
+// Compute-backed rigid-body stepper. Uploads a flat array of GpuPhysicsData
+// into a host-visible storage buffer, dispatches physics.slang's stepMain,
+// waits on a fence, reads the updated state back. The storage buffer grows on
+// demand — small body counts don't pay for a million-body allocation up front.
+//
+// Reuses the graphics queue (same family chosen in Device::FindGraphicsQueueFamily
+// already requires COMPUTE) so this demo stays on one queue; a dedicated
+// async-compute queue is a later concern for real-time physics overlap with
+// rendering.
+export class GpuPhysicsProcessor {
+ public:
+  explicit GpuPhysicsProcessor(Device& device) : device_(device) {
+    const auto& dev = device_.GetLogicalDevice();
+
+    vk::DescriptorSetLayoutBinding binding{
+        .binding = 0,
+        .descriptorType = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eCompute,
+    };
+    vk::DescriptorSetLayoutCreateInfo set_layout_info{
+        .bindingCount = 1,
+        .pBindings = &binding,
+    };
+    set_layout_ = vk::raii::DescriptorSetLayout(dev, set_layout_info);
+
+    vk::PushConstantRange push_range{
+        .stageFlags = vk::ShaderStageFlagBits::eCompute,
+        .offset = 0,
+        .size = sizeof(PushConstants),
+    };
+    vk::PipelineLayoutCreateInfo layout_info{
+        .setLayoutCount = 1,
+        .pSetLayouts = &*set_layout_,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_range,
+    };
+    pipe_layout_ = vk::raii::PipelineLayout(dev, layout_info);
+
+    std::ifstream file(kShaderPath, std::ios::ate | std::ios::binary);
+    if (!file.is_open()) {
+      throw std::runtime_error(std::string("GpuPhysicsProcessor: failed to open ") + kShaderPath);
+    }
+    std::vector<char> code(static_cast<std::size_t>(file.tellg()));
+    file.seekg(0);
+    file.read(code.data(), static_cast<std::streamsize>(code.size()));
+    vk::ShaderModuleCreateInfo shader_info{
+        .codeSize = code.size(),
+        .pCode = reinterpret_cast<const std::uint32_t*>(code.data()),
+    };
+    shader_ = vk::raii::ShaderModule(dev, shader_info);
+
+    vk::PipelineShaderStageCreateInfo stage{
+        .stage = vk::ShaderStageFlagBits::eCompute,
+        .module = *shader_,
+        .pName = "stepMain",
+    };
+    vk::ComputePipelineCreateInfo pipe_info{
+        .stage = stage,
+        .layout = *pipe_layout_,
+    };
+    pipeline_ = vk::raii::Pipeline(dev, nullptr, pipe_info);
+
+    vk::DescriptorPoolSize pool_size{
+        .type = vk::DescriptorType::eStorageBuffer,
+        .descriptorCount = 1,
+    };
+    vk::DescriptorPoolCreateInfo pool_info{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        .maxSets = 1,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+    };
+    pool_ = vk::raii::DescriptorPool(dev, pool_info);
+
+    vk::DescriptorSetAllocateInfo set_alloc_info{
+        .descriptorPool = *pool_,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &*set_layout_,
+    };
+    auto sets = vk::raii::DescriptorSets(dev, set_alloc_info);
+    set_ = std::move(sets[0]);
+
+    vk::CommandPoolCreateInfo cmd_pool_info{
+        .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+        .queueFamilyIndex = device_.GetGraphicsQueueFamily(),
+    };
+    cmd_pool_ = vk::raii::CommandPool(dev, cmd_pool_info);
+
+    vk::CommandBufferAllocateInfo cmd_alloc_info{
+        .commandPool = *cmd_pool_,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1,
+    };
+    auto cmds = vk::raii::CommandBuffers(dev, cmd_alloc_info);
+    cmd_ = std::move(cmds[0]);
+
+    fence_ = vk::raii::Fence(dev, vk::FenceCreateInfo{});
+    // bodies_buf_ is allocated lazily in EnsureCapacity so we don't size for a
+    // worst-case body count that may never materialize.
+  }
+
+  GpuPhysicsProcessor(const GpuPhysicsProcessor&) = delete;
+  GpuPhysicsProcessor& operator=(const GpuPhysicsProcessor&) = delete;
+  GpuPhysicsProcessor(GpuPhysicsProcessor&&) = delete;
+  GpuPhysicsProcessor& operator=(GpuPhysicsProcessor&&) = delete;
+
+  // In-place: uploads `bodies`, dispatches one thread per body, reads the
+  // updated state back into the same span. `dt` is a fixed sim step (not
+  // wall-clock frame time) and `ground_y` is the world-space height of the
+  // single implicit ground plane the shader resolves against.
+  void Step(std::span<GpuPhysicsData> bodies, float dt,
+            const glm::vec3& gravity, float ground_y) {
+    if (bodies.empty()) {
+      return;
+    }
+    EnsureCapacity(bodies.size());
+
+    std::memcpy(bodies_buf_.mapped, bodies.data(), bodies.size_bytes());
+
+    const auto& dev = device_.GetLogicalDevice();
+
+    cmd_.reset();
+    vk::CommandBufferBeginInfo begin_info{
+        .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit,
+    };
+    cmd_.begin(begin_info);
+    cmd_.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
+    cmd_.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipe_layout_, 0,
+                            *set_, nullptr);
+
+    PushConstants pc{
+        .dt = dt,
+        .ground_y = ground_y,
+        .body_count = static_cast<std::uint32_t>(bodies.size()),
+        ._pad0 = 0.0f,
+        .gravity = glm::vec4(gravity, 0.0f),
+    };
+    cmd_.pushConstants<PushConstants>(*pipe_layout_, vk::ShaderStageFlagBits::eCompute,
+                                      0, pc);
+
+    const std::uint32_t group_count = (pc.body_count + 63) / 64;
+    cmd_.dispatch(group_count, 1, 1);
+
+    // Host-coherent memory makes fence signaling sufficient in practice, but
+    // the explicit shader-write → host-read barrier keeps the validation layer
+    // quiet and documents the dependency — same pattern as HrtfProcessor.
+    vk::MemoryBarrier mem_barrier{
+        .srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+        .dstAccessMask = vk::AccessFlagBits::eHostRead,
+    };
+    cmd_.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                         vk::PipelineStageFlagBits::eHost,
+                         {}, mem_barrier, nullptr, nullptr);
+    cmd_.end();
+
+    dev.resetFences(*fence_);
+    vk::SubmitInfo submit_info{
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*cmd_,
+    };
+    device_.GetGraphicsQueue().submit(submit_info, *fence_);
+
+    auto wait_result = dev.waitForFences(*fence_, vk::True,
+                                         std::numeric_limits<std::uint64_t>::max());
+    if (wait_result != vk::Result::eSuccess) {
+      throw std::runtime_error("GpuPhysicsProcessor: fence wait failed");
+    }
+
+    std::memcpy(bodies.data(), bodies_buf_.mapped, bodies.size_bytes());
+  }
+
+ private:
+  // Matches `struct Params` in assets/shaders/physics.slang — 32 bytes.
+  struct PushConstants {
+    float dt;
+    float ground_y;
+    std::uint32_t body_count;
+    float _pad0;
+    glm::vec4 gravity;
+  };
+  static_assert(sizeof(PushConstants) == 32);
+
+  struct HostBuffer {
+    vk::raii::Buffer buf = nullptr;
+    vk::raii::DeviceMemory mem = nullptr;
+    void* mapped = nullptr;
+    vk::DeviceSize size = 0;
+  };
+
+  void EnsureCapacity(std::size_t body_count) {
+    const vk::DeviceSize bytes = body_count * sizeof(GpuPhysicsData);
+    if (bodies_buf_.size >= bytes) {
+      return;
+    }
+    bodies_buf_ = HostBuffer{};
+    CreateHostBuffer(bodies_buf_, bytes);
+    WriteDescriptorSet();
+  }
+
+  void CreateHostBuffer(HostBuffer& dst, vk::DeviceSize size) {
+    const auto& dev = device_.GetLogicalDevice();
+    vk::BufferCreateInfo buf_info{
+        .size = size,
+        .usage = vk::BufferUsageFlagBits::eStorageBuffer,
+        .sharingMode = vk::SharingMode::eExclusive,
+    };
+    dst.buf = vk::raii::Buffer(dev, buf_info);
+    vk::MemoryRequirements reqs = dst.buf.getMemoryRequirements();
+    vk::MemoryAllocateInfo alloc_info{
+        .allocationSize = reqs.size,
+        .memoryTypeIndex = FindMemoryType(
+            reqs.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent),
+    };
+    dst.mem = vk::raii::DeviceMemory(dev, alloc_info);
+    dst.buf.bindMemory(*dst.mem, 0);
+    dst.mapped = dst.mem.mapMemory(0, size);
+    dst.size = size;
+  }
+
+  void WriteDescriptorSet() {
+    vk::DescriptorBufferInfo buffer_info{
+        .buffer = *bodies_buf_.buf,
+        .offset = 0,
+        .range = bodies_buf_.size,
+    };
+    vk::WriteDescriptorSet write{
+        .dstSet = *set_,
+        .dstBinding = 0,
+        .dstArrayElement = 0,
+        .descriptorCount = 1,
+        .descriptorType = vk::DescriptorType::eStorageBuffer,
+        .pBufferInfo = &buffer_info,
+    };
+    device_.GetLogicalDevice().updateDescriptorSets(write, nullptr);
+  }
+
+  std::uint32_t FindMemoryType(std::uint32_t type_filter,
+                               vk::MemoryPropertyFlags properties) const {
+    auto props = device_.GetPhysicalDevice().getMemoryProperties();
+    for (std::uint32_t i = 0; i < props.memoryTypeCount; ++i) {
+      bool type_ok = (type_filter & (1u << i)) != 0;
+      bool props_ok = (props.memoryTypes[i].propertyFlags & properties) == properties;
+      if (type_ok && props_ok) {
+        return i;
+      }
+    }
+    throw std::runtime_error("GpuPhysicsProcessor: no suitable memory type");
+  }
+
+  static constexpr const char* kShaderPath = "assets/shaders/physics.spv";
+
+  Device& device_;
+
+  vk::raii::DescriptorSetLayout set_layout_ = nullptr;
+  vk::raii::PipelineLayout pipe_layout_ = nullptr;
+  vk::raii::ShaderModule shader_ = nullptr;
+  vk::raii::Pipeline pipeline_ = nullptr;
+  vk::raii::DescriptorPool pool_ = nullptr;
+  vk::raii::DescriptorSet set_ = nullptr;
+  vk::raii::CommandPool cmd_pool_ = nullptr;
+  vk::raii::CommandBuffer cmd_ = nullptr;
+  vk::raii::Fence fence_ = nullptr;
+
+  HostBuffer bodies_buf_;
+};
+
 // ---------------------------------------------------------------------------: PhysicsSystem
 
 // CPU rigid-body simulation. One step: accumulate forces → integrate forces →
@@ -228,6 +527,22 @@ export class PhysicsSystem {
     }
   }
 
+  // Alternate loop hook: runs each fixed step through the compute-shader
+  // pipeline in GpuPhysicsProcessor. Only collision handled is sphere vs. a
+  // single horizontal ground plane at `ground_y` — sphere-vs-sphere contact is
+  // not done on the GPU in this first pass (see physics.slang). Accumulator is
+  // shared with Update(), so toggling between CPU and GPU mid-simulation
+  // doesn't drop or double-count pending time.
+  void UpdateGpu(GpuPhysicsProcessor& processor, float delta_time, float ground_y) {
+    constexpr float kFixedStep = 1.0f / 60.0f;
+    constexpr float kMaxAccum = 0.25f;
+    accumulator_ += std::min(delta_time, kMaxAccum);
+    while (accumulator_ >= kFixedStep) {
+      StepGpu(processor, kFixedStep, ground_y);
+      accumulator_ -= kFixedStep;
+    }
+  }
+
  private:
   void Step(float dt) {
     AccumulateForces();
@@ -237,6 +552,64 @@ export class PhysicsSystem {
     ResolveCollisions(collisions);
     IntegrateVelocities(dt);
     ClearForces();
+  }
+
+  // One GPU-driven fixed step: pack state → dispatch stepMain → unpack state.
+  // Kinematic bodies are packed (the shader needs to see them for counts and
+  // flags) but are early-outed inside the shader. Kept in the same fixed-step
+  // wrapper as Step() so toggling CPU/GPU doesn't change the time integrator.
+  void StepGpu(GpuPhysicsProcessor& processor, float dt, float ground_y) {
+    if (bodies_.empty()) {
+      return;
+    }
+    gpu_scratch_.resize(bodies_.size());
+    for (std::size_t i = 0; i < bodies_.size(); ++i) {
+      gpu_scratch_[i] = PackBody(*bodies_[i]);
+    }
+    processor.Step(std::span(gpu_scratch_), dt, gravity_, ground_y);
+    for (std::size_t i = 0; i < bodies_.size(); ++i) {
+      UnpackBody(*bodies_[i], gpu_scratch_[i]);
+    }
+  }
+
+  static GpuPhysicsData PackBody(const RigidBody& body) {
+    GpuPhysicsData out{};
+    out.position = glm::vec4(body.position_, body.inverse_mass_);
+    const glm::quat& q = body.rotation_;
+    out.rotation = glm::vec4(q.x, q.y, q.z, q.w);
+    out.linear_velocity = glm::vec4(body.linear_velocity_, body.restitution_);
+    out.angular_velocity = glm::vec4(body.angular_velocity_, body.friction_);
+    out.force = glm::vec4(body.accumulated_force_, body.is_kinematic_ ? 1.0f : 0.0f);
+    out.torque = glm::vec4(body.accumulated_torque_, body.use_gravity_ ? 1.0f : 0.0f);
+
+    if (body.collider_ == nullptr) {
+      out.collider = glm::vec4(0.0f, 0.0f, 0.0f, -1.0f);
+      out.collider2 = glm::vec4(0.0f);
+      return out;
+    }
+    if (body.collider_->GetType() == ColliderType::Sphere) {
+      const auto* s = static_cast<const SphereCollider*>(body.collider_.get());
+      out.collider = glm::vec4(s->GetRadius(), 0.0f, 0.0f, 1.0f);
+    } else {
+      const auto* b = static_cast<const BoxCollider*>(body.collider_.get());
+      out.collider = glm::vec4(b->GetHalfExtents(), 0.0f);
+    }
+    out.collider2 = glm::vec4(body.collider_->GetOffset(), 0.0f);
+    return out;
+  }
+
+  static void UnpackBody(RigidBody& body, const GpuPhysicsData& gpu) {
+    if (body.is_kinematic_) {
+      return;  // shader early-outs kinematic bodies, so GPU state is stale
+    }
+    body.position_ = glm::vec3(gpu.position);
+    body.rotation_ = glm::quat(gpu.rotation.w, gpu.rotation.x, gpu.rotation.y, gpu.rotation.z);
+    body.linear_velocity_ = glm::vec3(gpu.linear_velocity);
+    body.angular_velocity_ = glm::vec3(gpu.angular_velocity);
+    // Shader already cleared force/torque into the w-flag-preserving slots;
+    // mirror that on CPU so any ApplyForce next frame starts from zero.
+    body.accumulated_force_ = glm::vec3(0.0f);
+    body.accumulated_torque_ = glm::vec3(0.0f);
   }
 
   void AccumulateForces() {
@@ -443,6 +816,10 @@ export class PhysicsSystem {
   std::vector<std::unique_ptr<RigidBody>> bodies_;
   glm::vec3 gravity_{0.0f, -9.81f, 0.0f};
   float accumulator_ = 0.0f;
+
+  // Reused buffer to avoid per-step allocations on the GPU path. Empty on the
+  // CPU path — StepGpu owns its lifetime.
+  std::vector<GpuPhysicsData> gpu_scratch_;
 };
 
 // ---------------------------------------------------------------------------: RigidBodyComponent

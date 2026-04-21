@@ -122,6 +122,12 @@ public:
     // destroys the backing RigidBody objects.
     engine::PhysicsSystem physics;
 
+    // Second compute pipeline — rigid-body step on the GPU. Same ordering
+    // concern as HrtfProcessor: declared after PhysicsSystem but lives above
+    // scene in the stack so its vk::raii members outlive nothing they depend
+    // on; it needs `device` alive at destruction.
+    engine::GpuPhysicsProcessor gpu_physics(device);
+
     engine::Swapchain swapchain(window, device);
 
     engine::ResourceManager resources;
@@ -308,8 +314,12 @@ public:
     ground->SetKinematic(true);
     ground->SetRestitution(0.3f);
     ground->SetPosition(glm::vec3(0.0f, kGroundY, 0.0f));
+    // GPU shader treats the ground as a single horizontal plane — top face of
+    // the box above, i.e. position.y + half_extents.y.
+    constexpr float kGroundSurfaceY = kGroundY + 1.0f;
 
     bool physics_enabled = false;
+    bool physics_use_gpu = false;
     float gravity_y = -9.81f;
 
     auto reset_bodies = [&]() {
@@ -347,7 +357,11 @@ public:
       }
 
       if (physics_enabled) {
-        physics.Update(delta);
+        if (physics_use_gpu) {
+          physics.UpdateGpu(gpu_physics, delta, kGroundSurfaceY);
+        } else {
+          physics.Update(delta);
+        }
       } else {
         // Pin bodies to authored positions so toggling the checkbox is
         // idempotent — users can hit enable/disable without a separate reset.
@@ -450,6 +464,7 @@ public:
 
         ImGui::Begin("Physics");
         ImGui::Checkbox("Enable physics", &physics_enabled);
+        ImGui::Checkbox("Use GPU (compute)", &physics_use_gpu);
         if (ImGui::SliderFloat("Gravity Y", &gravity_y, -20.0f, 5.0f)) {
           physics.SetGravity(glm::vec3(0.0f, gravity_y, 0.0f));
         }
@@ -458,6 +473,9 @@ public:
         }
         ImGui::Text("Bodies: %zu (10 helmets + 1 ground)", physics.GetBodyCount());
         ImGui::TextDisabled("Ground plane is invisible, at y = %.1f", kGroundY);
+        if (physics_use_gpu) {
+          ImGui::TextDisabled("GPU path: sphere-vs-sphere contacts are skipped");
+        }
         ImGui::End();
 
         if (show_demo) {

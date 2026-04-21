@@ -167,4 +167,12 @@ add_slang_shader_target(shader_hrtf
   OUTPUT hrtf.spv
 )
 
-add_dependencies(${PROJECT_NAME} shader_pbr shader_hrtf sync_assets)
+# Physics compute shader — GPU rigid-body step. Loaded by
+# engine::GpuPhysicsProcessor from physics.spv.
+add_slang_shader_target(shader_physics
+  SOURCES ${CMAKE_SOURCE_DIR}/assets/shaders/physics.slang
+  ENTRY_POINTS stepMain
+  OUTPUT physics.spv
+)
+
+add_dependencies(${PROJECT_NAME} shader_pbr shader_hrtf shader_physics sync_assets)
